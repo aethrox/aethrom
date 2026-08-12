@@ -1,5 +1,5 @@
 #!/bin/bash
-# SessionStart — inject continuity (last session + threads + identity).
+# SessionStart - inject continuity (last session + threads + identity).
 # Runs on macOS, Linux and Windows (Git Bash). See _common.sh for the portability shims.
 . "$(dirname "$0")/_common.sh"
 
@@ -26,11 +26,11 @@ CTX=""
 [ -n "$REFLECTION" ] && CTX="${CTX}${REFLECTION}
 
 "
-[ -n "$LAST_SESSION" ] && CTX="${CTX}[Memory — Last Session]
+[ -n "$LAST_SESSION" ] && CTX="${CTX}[Memory - Last Session]
 ${LAST_SESSION}
 
 "
-[ -n "$THREADS" ] && CTX="${CTX}[Memory — Active Threads]
+[ -n "$THREADS" ] && CTX="${CTX}[Memory - Active Threads]
 ${THREADS}
 
 "

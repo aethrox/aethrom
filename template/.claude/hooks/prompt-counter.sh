@@ -1,5 +1,5 @@
 #!/bin/bash
-# UserPromptSubmit — count prompts; nudge once at 15 to save memory at session end.
+# UserPromptSubmit - count prompts; nudge once at 15 to save memory at session end.
 . "$(dirname "$0")/_common.sh"
 
 VAULT_DIR="$(resolve_vault_dir)"

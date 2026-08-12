@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Optional semantic recall layer — the bridge between the companion and mem0.
+"""Optional semantic recall layer - the bridge between the companion and mem0.
 
 Setup:
     uv venv .claude/mem0-venv
@@ -11,7 +11,7 @@ Usage:
     .claude/mem0-venv/bin/python .claude/semantic-memory.py add "a durable fact"
     .claude/mem0-venv/bin/python .claude/semantic-memory.py search "topic"
 
-`uv tool install mem0ai` does NOT work — mem0ai is a library and ships no executables.
+`uv tool install mem0ai` does NOT work - mem0ai is a library and ships no executables.
 Do not rename this file to mem0.py: its own directory is on sys.path and would shadow
 the mem0 package. The files in 850-Companion/ remain the source of truth; this is only
 a recall index, so a failure here must never block a reply.
@@ -27,7 +27,7 @@ SETTINGS = pathlib.Path(__file__).with_name("settings.local.json")
 def client():
     key = json.loads(SETTINGS.read_text(encoding="utf-8")).get("env", {}).get("MEM0_API_KEY", "")
     if not key:
-        sys.exit("MEM0_API_KEY is empty — put it in .claude/settings.local.json")
+        sys.exit("MEM0_API_KEY is empty - put it in .claude/settings.local.json")
     from mem0 import MemoryClient
 
     return MemoryClient(api_key=key)

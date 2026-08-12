@@ -1,5 +1,5 @@
 #!/bin/bash
-# SessionEnd — if a real session ended without a memory write, leave a reflection marker.
+# SessionEnd - if a real session ended without a memory write, leave a reflection marker.
 . "$(dirname "$0")/_common.sh"
 
 VAULT_DIR="$(resolve_vault_dir)"
