@@ -237,6 +237,7 @@ emit_context() {
 ```bash
 #!/bin/bash
 # SessionStart - inject continuity (last session + threads + identity).
+# Runs on macOS, Linux and Windows (Git Bash). See _common.sh for the portability shims.
 . "$(dirname "$0")/_common.sh"
 
 VAULT_DIR="$(resolve_vault_dir)"
@@ -258,8 +259,26 @@ if [ -f "$STATE_DIR/needs_reflection" ]; then
   rm -f "$STATE_DIR/needs_reflection"
 fi
 
+# A scheduled backup has nowhere to print, so a broken one is invisible until the
+# day you need it. backup.sh leaves its reason here; a stamp that stops moving
+# means the scheduled task itself is gone. Silent when no backup was ever set up.
+BACKUP_WARN=""
+if [ -f "$STATE_DIR/backup_failed" ]; then
+  since=$(head -1 "$STATE_DIR/backup_failed" 2>/dev/null)
+  why=$(sed -n '2p' "$STATE_DIR/backup_failed" 2>/dev/null)
+  BACKUP_WARN="⚠️ Vault backup failing since $since: $why (nothing else reports this, tell the user)"
+elif [ -f "$STATE_DIR/backup_ok" ]; then
+  age=$(( ( $(date +%s) - $(mtime_of "$STATE_DIR/backup_ok") ) / 3600 ))
+  if [ "$age" -ge 24 ] 2>/dev/null; then
+    BACKUP_WARN="⚠️ The vault backup has not run for $age hours. Its scheduled task may be gone. Tell the user."
+  fi
+fi
+
 CTX=""
 [ -n "$REFLECTION" ] && CTX="${CTX}${REFLECTION}
+
+"
+[ -n "$BACKUP_WARN" ] && CTX="${CTX}${BACKUP_WARN}
 
 "
 [ -n "$LAST_SESSION" ] && CTX="${CTX}[Memory - Last Session]
@@ -720,45 +739,75 @@ set -u
 DEFAULT_VAULT="{{VAULT_PATH}}"
 VAULT_DIR="${1:-$DEFAULT_VAULT}"
 cd "$VAULT_DIR" || { echo "no vault at: $VAULT_DIR" >&2; exit 1; }
-[ -d .git ] || { echo "not a git repo: $VAULT_DIR" >&2; exit 1; }
-git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 || {
-  echo "no upstream branch. Set one with: git push -u origin HEAD" >&2; exit 1; }
+
+if [ ! -d .git ]; then
+  echo "not a git repo: $VAULT_DIR" >&2
+  exit 1
+fi
+
+STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
+FAIL_MARKER="$STATE_DIR/backup_failed"
+OK_STAMP="$STATE_DIR/backup_ok"
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+
+# A scheduled run has nowhere to print. Leave the reason where session-start.sh
+# will find it, so the next Claude session says so out loud. Two lines, fixed
+# size: when it started failing, and why it failed last.
+die() { # die <reason>
+  local since
+  echo "STOPPED: $1" >&2
+  since="$(head -1 "$FAIL_MARKER" 2>/dev/null)"
+  [ -n "$since" ] || since="$(date '+%Y-%m-%d %H:%M')"
+  printf '%s\n%s\n' "$since" "$1" > "$FAIL_MARKER" 2>/dev/null || true
+  exit 1
+}
+
+git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 \
+  || die "no upstream branch, nothing to push to. Set one with: git push -u origin HEAD"
 
 git add -A
 
 if git diff --cached --quiet; then
   echo "nothing changed"
 else
+  # Refuse to commit if the key file ever slips past .gitignore.
   if git diff --cached --name-only | grep -q "settings.local.json"; then
-    echo "STOPPED: settings.local.json is staged (it holds the API key)" >&2
-    git reset -q; exit 1
+    git reset -q
+    die "settings.local.json is staged (it holds the API key)"
   fi
+
+  # House rule: no em dash anywhere. Catch it before it reaches a commit.
   emdash_hits=$(git diff --cached --name-only -z \
     | xargs -0 -r grep -Il "$(printf '\xe2\x80\x94')" 2>/dev/null)
   if [ -n "$emdash_hits" ]; then
-    echo "STOPPED: em dash (U+2014) found in:" >&2
     printf '%s\n' "$emdash_hits" | sed 's/^/  /' >&2
-    git reset -q; exit 1
+    git reset -q
+    die "em dash (U+2014) in: $(printf '%s' "$emdash_hits" | tr '\n' ' ')"
   fi
+
   git commit -q -m "backup: $(date '+%Y-%m-%d %H:%M')"
 fi
 
 # Take the remote's commits before pushing ours. Without this, anything committed
-# elsewhere makes every later push a rejected non-fast-forward, and -q means it
-# fails without saying anything. Runs even with nothing to commit, so a quiet day
-# still heals the drift.
+# elsewhere (another machine, the GitHub web UI) makes every later push a rejected
+# non-fast-forward, and -q means it fails without saying anything.
+# Runs even when there was nothing to commit, so a quiet day still heals the drift.
 if ! git pull --rebase -q origin HEAD; then
   git rebase --abort 2>/dev/null
-  echo "STOPPED: pull --rebase failed, resolve by hand. Committed locally, not pushed." >&2
-  exit 1
+  die "pull --rebase failed, resolve it by hand. Committed locally, not pushed."
 fi
 
 if [ -n "$(git log '@{u}..HEAD' --oneline 2>/dev/null)" ]; then
-  git push -q origin HEAD || { echo "STOPPED: push failed." >&2; exit 1; }
+  git push -q origin HEAD || die "push failed"
   echo "backed up: $(git log -1 --format=%h)"
 else
   echo "nothing to push"
 fi
+
+# Touched on every clean run, including the quiet ones. session-start.sh watches
+# its age: a stamp that stops moving means the scheduled task itself is gone.
+rm -f "$FAIL_MARKER"
+date '+%Y-%m-%d %H:%M' > "$OK_STAMP" 2>/dev/null || true
 ```
 
 ### Scheduling it hourly

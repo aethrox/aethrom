@@ -22,8 +22,26 @@ if [ -f "$STATE_DIR/needs_reflection" ]; then
   rm -f "$STATE_DIR/needs_reflection"
 fi
 
+# A scheduled backup has nowhere to print, so a broken one is invisible until the
+# day you need it. backup.sh leaves its reason here; a stamp that stops moving
+# means the scheduled task itself is gone. Silent when no backup was ever set up.
+BACKUP_WARN=""
+if [ -f "$STATE_DIR/backup_failed" ]; then
+  since=$(head -1 "$STATE_DIR/backup_failed" 2>/dev/null)
+  why=$(sed -n '2p' "$STATE_DIR/backup_failed" 2>/dev/null)
+  BACKUP_WARN="⚠️ Vault backup failing since $since: $why (nothing else reports this, tell the user)"
+elif [ -f "$STATE_DIR/backup_ok" ]; then
+  age=$(( ( $(date +%s) - $(mtime_of "$STATE_DIR/backup_ok") ) / 3600 ))
+  if [ "$age" -ge 24 ] 2>/dev/null; then
+    BACKUP_WARN="⚠️ The vault backup has not run for $age hours. Its scheduled task may be gone. Tell the user."
+  fi
+fi
+
 CTX=""
 [ -n "$REFLECTION" ] && CTX="${CTX}${REFLECTION}
+
+"
+[ -n "$BACKUP_WARN" ] && CTX="${CTX}${BACKUP_WARN}
 
 "
 [ -n "$LAST_SESSION" ] && CTX="${CTX}[Memory - Last Session]

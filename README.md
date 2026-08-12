@@ -64,6 +64,12 @@ anything with an em dash in it, and pulling before it pushes so a push is never 
 wizard offers to schedule it hourly: a scheduled task on Windows, a systemd user timer on Linux,
 a launchd agent on macOS.
 
+A scheduled backup has nowhere to print, so a broken one is normally invisible until the day you
+need it. `backup.sh` writes the reason it stopped into the hook state directory, and
+`session-start.sh` reads it out at the top of the next session, along with a warning if the
+hourly run has not happened in over a day. It stays quiet on a vault where no backup was ever set
+up, and quiet again as soon as one succeeds.
+
 ## Layout
 
 ```
