@@ -1,0 +1,14 @@
+{
+  "_comment": "Windows variant. Rename to settings.local.json. {{BASH_PATH}} = full path to Git Bash (NOT System32\\bash.exe, that is WSL). {{VAULT_PATH_FWD}} = vault path with forward slashes, e.g. C:/Users/you/Documents/MyOS",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/session-start.sh\"", "timeout": 15 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/prompt-counter.sh\"", "timeout": 5 } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/session-end.sh\"", "timeout": 10 } ] }
+    ]
+  }
+}

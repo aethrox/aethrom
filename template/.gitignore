@@ -1,0 +1,16 @@
+# Secrets — never commit
+.claude/settings.local.json
+
+# Local hook state
+.claude/hooks/.state/*
+!.claude/hooks/.state/.gitkeep
+
+# mem0 virtualenv and generated launcher icons
+.claude/mem0-venv/
+.claude/brain.png
+.claude/brain.ico
+
+# OS / editor noise
+.DS_Store
+.obsidian/workspace*
+.obsidian/cache
