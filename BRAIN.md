@@ -842,10 +842,30 @@ option, do not run it: that is a persistent system change of its own.
 `ProgramArguments` of `/bin/bash`, the script path and the vault path, plus
 `<key>StartInterval</key><integer>3600</integer>`. Load it with `launchctl load`.
 
-**Windows**, a per-user scheduled task. It must call Git Bash, not `System32\bash.exe`:
+**Windows**, a per-user scheduled task. It must call Git Bash, not `System32\bash.exe`. Route it
+through `wscript.exe`, or a black console window appears on the desktop every hour. First write
+`{{VAULT_PATH}}/.claude/run-hidden.vbs`:
+
+```vbs
+' Run a console command with no visible window, and still report its exit code.
+Set shell = CreateObject("WScript.Shell")
+If WScript.Arguments.Count = 0 Then
+  WScript.Quit 2
+End If
+cmd = ""
+For i = 0 To WScript.Arguments.Count - 1
+  cmd = cmd & """" & WScript.Arguments(i) & """ "
+Next
+' 0 = hidden window, True = wait for it to finish
+WScript.Quit shell.Run(cmd, 0, True)
+```
+
+It has to wait and pass the exit code back. A fire-and-forget call makes the task report success
+forever, which throws away the only signal a scheduled backup has.
 
 ```powershell
-$action  = New-ScheduledTaskAction -Execute "{{BASH_PATH}}" -Argument '"{{VAULT_PATH_FWD}}/.claude/backup.sh" "{{VAULT_PATH_FWD}}"'
+$vbs     = "{{VAULT_PATH}}\.claude\run-hidden.vbs"
+$action  = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\wscript.exe" -Argument ('//nologo "{0}" "{1}" "{2}/.claude/backup.sh" "{2}"' -f $vbs, "{{BASH_PATH}}", "{{VAULT_PATH_FWD}}")
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Hours 1)
 $set     = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
 Register-ScheduledTask -TaskName "{{OS_NAME}} Vault Backup" -Action $action -Trigger $trigger -Settings $set -Force

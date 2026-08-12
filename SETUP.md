@@ -165,7 +165,12 @@ powershell -ExecutionPolicy Bypass -File scripts\schedule-backup.ps1 -VaultPath 
 ```
 
 Ask before running it: this is a persistent change to the user's machine. Then confirm it
-registered, and say plainly that nothing announces a failed backup except its exit code.
+registered, and say plainly that nothing announces a failed backup except its exit code and the
+warning the session-start hook prints.
+
+On Windows the script routes the task through `.claude/run-hidden.vbs`, because Git Bash is a
+console program and the task would otherwise flash a black window on the desktop every hour. If
+the vault does not carry that file, the task still works but the window comes back.
 
 > On Linux a user timer only runs while the user is logged in. Mention `loginctl enable-linger`
 > as an option, do not run it: it is a persistent system change of its own.

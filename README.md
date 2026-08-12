@@ -78,6 +78,7 @@ template/            the vault scaffold, copied to its real home during setup
   .claude/hooks/     the continuity engine (session-start, prompt-counter, session-end,
                      plus _common.sh, the portability shims they all source)
   .claude/backup.sh  commit and push the vault, scheduled hourly during setup
+  .claude/run-hidden.vbs       Windows only: runs the hourly backup with no console window
   .claude/semantic-memory.py   optional mem0 recall bridge
 hermes/skills/       the same memory protocol, as a hermes skill
 scripts/install.*    the setup wizard, one per platform
@@ -117,6 +118,12 @@ on Fedora even though the rest of the row is not.
 - **No `python3` dependency** in the hooks. It is not guaranteed on Windows.
 - **Windows path conversion.** Claude Code substitutes `$CLAUDE_PROJECT_DIR` as `C:\Users\...`,
   which `dirname` cannot split. `to_posix()` in `_common.sh` converts it to `/c/Users/...`.
+
+- **Windows: the hourly backup goes through `wscript.exe`.** Git Bash is a console program, so
+  Task Scheduler pops a black window on the desktop every hour while you are logged in.
+  `.claude/run-hidden.vbs` runs it with no window, waits, and returns the exit code, so
+  `LastTaskResult` still reports a failed backup. A fire-and-forget call would report success
+  forever.
 
 > [!WARNING]
 > On Windows the hooks must be invoked with Git Bash. `C:\Windows\System32\bash.exe` is the WSL

@@ -29,7 +29,18 @@ if (-not (Test-Path $BashPath)) { throw "Git Bash not found (looked for: $BashPa
 $taskName = "$VaultName Vault Backup"
 $fwd = $VaultPath.Replace('\', '/')
 
-$action = New-ScheduledTaskAction -Execute $BashPath -Argument "`"$fwd/.claude/backup.sh`" `"$fwd`""
+# Git Bash is a console program, so an hourly task flashes a black window on the
+# desktop every hour. wscript.exe runs it with no window at all. The wrapper waits
+# and returns the exit code, so LastTaskResult still reports a failed backup.
+$hidden = Join-Path $VaultPath '.claude\run-hidden.vbs'
+if (Test-Path $hidden) {
+  $action = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\wscript.exe" `
+    -Argument ('//nologo "{0}" "{1}" "{2}/.claude/backup.sh" "{2}"' -f $hidden, $BashPath, $fwd)
+}
+else {
+  Write-Output "note: .claude\run-hidden.vbs missing, the task will show a console window each hour"
+  $action = New-ScheduledTaskAction -Execute $BashPath -Argument "`"$fwd/.claude/backup.sh`" `"$fwd`""
+}
 # One trigger repeating hourly, rather than 24 daily triggers.
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Hours 1)
 # StartWhenAvailable catches up a run missed while the machine was off.
