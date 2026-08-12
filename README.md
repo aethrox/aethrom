@@ -41,6 +41,11 @@ regenerates it from the template.
 For the interview-driven path where Claude does the whole build and personalises the prose, open
 Claude Code in the clone and tell it to follow `SETUP.md` instead.
 
+**Without the repo:** `BRAIN.md` is the same system as one self-contained file. Hand its contents
+to Claude Code (paste it, or drop the file into any directory) and say "bunu uygula". It carries
+the full scaffold inline: hooks, `CLAUDE.md`, seed memory, launchers, per-platform branches. No
+clone, no network, no download. That is the copy to send to someone who cannot reach this repo.
+
 ## Layout
 
 ```
@@ -50,7 +55,8 @@ template/            the vault scaffold, copied to its real home during setup
 hermes/skills/       the same memory protocol, as a hermes skill
 scripts/install.*    the setup wizard, one per platform
 scripts/             desktop launchers and the hermes installer
-SETUP.md             the runbook Claude follows
+SETUP.md             the runbook Claude follows, needs this clone
+BRAIN.md             the same build as one self-contained file, needs nothing
 ```
 
 ## House rule: no em dash
