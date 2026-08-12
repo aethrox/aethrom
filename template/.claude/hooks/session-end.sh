@@ -17,7 +17,7 @@ if [ -f "$MEM_DIR/Last-Session.md" ]; then
 fi
 
 if [ "$PROMPTS" -ge 5 ] && [ "$MODIFIED" -eq 0 ]; then
-  echo "Oturum hafıza güncellemeden bitti. Prompt: $PROMPTS. $(date '+%Y-%m-%d %H:%M')" > "$STATE_DIR/needs_reflection"
+  echo "session ended without a memory write, $PROMPTS prompts, $(date '+%Y-%m-%d %H:%M')" > "$STATE_DIR/needs_reflection"
 fi
 
 rm -f "$STATE_DIR/session_start_time" "$STATE_DIR/prompt_count"

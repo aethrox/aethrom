@@ -11,7 +11,7 @@ osacompile -o "$APP" -e "do shell script \"open \\\"obsidian://open?vault=${VAUL
 # The icon needs Swift (Command Line Tools). Without it the launcher still works,
 # it just keeps the default applet icon - never block on this.
 if ! command -v swift >/dev/null 2>&1; then
-  echo "swift yok - ikon atlandı (opsiyonel). Launcher yine de çalışıyor."
+  echo "no swift, icon skipped (optional). The launcher still works."
   echo "launcher ✓ $APP"
   exit 0
 fi

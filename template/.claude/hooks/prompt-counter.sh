@@ -10,6 +10,6 @@ COUNT=0; [ -f "$STATE_DIR/prompt_count" ] && COUNT=$(cat "$STATE_DIR/prompt_coun
 COUNT=$((COUNT + 1)); echo "$COUNT" > "$STATE_DIR/prompt_count"
 
 if [ "$COUNT" -eq 15 ]; then
-  emit_context "UserPromptSubmit" "[Memory] Oturum uzadı. Bitirirken Last-Session.md ve Threads.md güncellemeyi unutma."
+  emit_context "UserPromptSubmit" "[Memory] This session is running long. Before it ends, update Last-Session.md and Threads.md."
 fi
 exit 0

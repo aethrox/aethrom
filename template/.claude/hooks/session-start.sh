@@ -18,7 +18,7 @@ THREADS=""
 
 REFLECTION=""
 if [ -f "$STATE_DIR/needs_reflection" ]; then
-  REFLECTION="⚠️ Önceki oturum hafıza güncellemeden bitti: $(cat "$STATE_DIR/needs_reflection"). Anlamlı bir şey olduysa 🔮 850-Companion dosyalarını güncelle."
+  REFLECTION="⚠️ The previous session ended without a memory write: $(cat "$STATE_DIR/needs_reflection"). If anything mattered, update the 🔮 850-Companion files."
   rm -f "$STATE_DIR/needs_reflection"
 fi
 

@@ -2,17 +2,23 @@
 
 > You are Claude Code, running inside a fresh clone of this repo. The user wants their own AI
 > second brain. The scaffold is in `./template/`. Interview them, copy it to its real home,
-> personalize it, and build the launcher. Speak **Turkish** to the user.
+> personalize it, and build the launcher.
 
 ## Rules
+0. **Ask for their language first, then use it.** PHASE 1 question 1 settles which language the
+   user wants. Ask that first question in the language the machine's locale suggests, and speak
+   whatever they answer for the rest of the run. Every question and message below is written in
+   English so the instructions stay precise; translate them as you go. What you write into the
+   vault stays English except where a placeholder says otherwise.
 1. Interview first, build second. Never leave a literal `{{...}}` in any file.
 2. Never destroy. If the target vault path exists, show it and ask before overwriting.
 3. Don't block on optional steps (mem0, icons). Log it, tell the user, continue.
 4. **Detect the OS first** - every phase below branches on it. Don't run macOS commands on Windows.
 5. Verify each phase by running it, not by reading it. End with the first-run report.
 
-Placeholders: `{{OS_NAME}}` · `{{USER_NAME}}` · `{{USER_BIO}}` · `{{COMPANION}}` · `{{VAULT_PATH}}` ·
-`{{TODAY}}` · `{{USER_ID}}` · `{{VENV_PYTHON}}` · (Windows only) `{{BASH_PATH}}` · `{{VAULT_PATH_FWD}}`
+Placeholders: `{{LANGUAGE}}` · `{{OS_NAME}}` · `{{USER_NAME}}` · `{{USER_BIO}}` · `{{COMPANION}}` ·
+`{{VAULT_PATH}}` · `{{TODAY}}` · `{{USER_ID}}` · `{{VENV_PYTHON}}` ·
+(Windows only) `{{BASH_PATH}}` · `{{VAULT_PATH_FWD}}`
 
 ---
 
@@ -47,12 +53,17 @@ Verify it before continuing: `& $bash -c "echo ok"` must print `ok`.
 
 ## PHASE 1 - Interview (Turkish, conversational - not a form)
 
-1. **İsmin ne?** → `{{USER_NAME}}` (also becomes `{{USER_ID}}`, lowercased, for mem0)
-2. **Ne iş yapıyorsun / bu beyni en çok ne için kullanacaksın?** (1-2 cümle) → `{{USER_BIO}}`
-3. **AI ortağına ne isim vermek istersin?** → `{{COMPANION}}`
-4. **Kapsam:** core (herkes) + opsiyonel `⚔️ 200-Goals`, `🔐 400-Vault`, `💪 700-Body`, `🧘 800-Mind`
-5. **Semantik hafıza (mem0)?** Dosya tabanlı hafıza API'siz çalışır ve herkese yeter. mem0 üstüne
-   anlamsal arama koyar - temel sürümü ücretsiz (mem0.ai, kredi kartı yok). Önerilir.
+1. **Which language should your companion speak to you in?** → `{{LANGUAGE}}`. Ask this first,
+   in the language the locale suggests, and switch to their answer for everything after it. Free
+   text, not a menu.
+2. **What is your name?** → `{{USER_NAME}}` (also becomes `{{USER_ID}}`, lowercased, for mem0)
+3. **What do you do, and what will you use this brain for most?** (1-2 sentences) → `{{USER_BIO}}`
+4. **What do you want to call your AI companion?** → `{{COMPANION}}`
+5. **Scope:** core (everyone) plus the optional `⚔️ 200-Goals`, `🔐 400-Vault`, `💪 700-Body`,
+   `🧘 800-Mind`
+6. **Semantic memory (mem0)?** The file-based memory works with no API and is enough for most
+   people. mem0 adds semantic search on top; the base tier is free (mem0.ai, no credit card).
+   Recommended, but optional.
 
 Confirm the vault path with the user before creating anything.
 
@@ -106,11 +117,11 @@ If it prints nothing, the hook is broken and continuity is silently dead - debug
 ## PHASE 5 - Personalize
 
 Replace every placeholder in every file under the vault. Files that contain them: `CLAUDE.md`,
-`🎯 100-Command-Center/Dashboard.md`, all of `🔮 850-Companion/*.md`, the three hooks, and
-`.claude/semantic-memory.py`. Then verify:
+`🎯 100-Command-Center/Dashboard.md`, all of `🔮 850-Companion/*.md`, the three hooks,
+`.claude/backup.sh`, and `.claude/semantic-memory.py`. Then verify:
 
 ```bash
-grep -rl "{{" "{{VAULT_PATH}}" || echo "✓ tüm placeholder'lar dolduruldu"
+grep -rl "{{" "{{VAULT_PATH}}" || echo "all placeholders resolved"
 ```
 
 Keep the folder named `🔮 850-Companion` - the hooks reference that exact path. The companion's
@@ -135,6 +146,29 @@ powershell -ExecutionPolicy Bypass -File scripts\launcher-windows.ps1 -VaultName
 
 The `obsidian://` handler only resolves after the vault has been opened in Obsidian once, so the
 launcher does nothing until PHASE 8. Say so rather than letting the user think it is broken.
+
+---
+
+## PHASE 6b - Hourly backup
+
+Only if the vault has a remote to push to. Check with
+`git -C "{{VAULT_PATH}}" rev-parse '@{u}'`; if it fails, tell the user to
+`git push -u origin HEAD` first and schedule it afterwards.
+
+```bash
+# Linux (systemd user timer) and macOS (launchd agent)
+./scripts/schedule-backup.sh "{{VAULT_PATH}}" "{{OS_NAME}}"
+```
+```powershell
+# Windows (per-user scheduled task)
+powershell -ExecutionPolicy Bypass -File scripts\schedule-backup.ps1 -VaultPath "{{VAULT_PATH}}" -VaultName "{{OS_NAME}}"
+```
+
+Ask before running it: this is a persistent change to the user's machine. Then confirm it
+registered, and say plainly that nothing announces a failed backup except its exit code.
+
+> On Linux a user timer only runs while the user is logged in. Mention `loginctl enable-linger`
+> as an option, do not run it: it is a persistent system change of its own.
 
 ---
 
@@ -165,13 +199,15 @@ gitignored and must stay uncommitted. Verify with:
 ```bash
 ls -la "{{VAULT_PATH}}"
 ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # 4 *.sh incl. _common.sh
-test -f "{{VAULT_PATH}}/CLAUDE.md" && echo "CLAUDE.md ✓"
-test -f "{{VAULT_PATH}}/🔮 850-Companion/Last-Session.md" && echo "memory ✓"
+test -f "{{VAULT_PATH}}/CLAUDE.md" && echo "CLAUDE.md ok"
+test -f "{{VAULT_PATH}}/🔮 850-Companion/Last-Session.md" && echo "memory ok"
 ```
 
-Report to the user in Turkish:
-- ✅ Ne kuruldu (klasörler, hooks, hafıza, companion adı, 🧠 kısayolu)
-- ▶️ **İlk çalıştırma:** Obsidian'ı aç → vault olarak `{{VAULT_PATH}}` seç (bu vault'u Obsidian'a
-  bir kez tanıtır; 🧠 ikonu bundan sonra tek tıkla açar). Sonra o klasörde `claude` çalıştır.
-- ✨ **Sihri göster:** Bir şey konuş, `/exit` yap, tekrar `claude` aç - {{COMPANION}} geçen
-  oturumu hatırlıyor olacak. Devamlılık = fark.
+Report to the user in `{{LANGUAGE}}`:
+- ✅ **What was built:** folders, hooks, memory files, the companion's name, the 🧠 shortcut
+- ▶️ **First run:** open Obsidian and pick `{{VAULT_PATH}}` as a vault. That introduces it to
+  Obsidian once; the 🧠 icon opens it in one click from then on. Then run `claude` in that folder.
+- ✨ **Show them the magic:** say something, `/exit`, open `claude` again. {{COMPANION}} will
+  remember the last session. Continuity is the whole difference.
+- ⚠️ Name every optional step that was skipped or failed (icon, mem0, Obsidian install, the
+  scheduled backup). Do not pass over them silently.

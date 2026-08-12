@@ -40,6 +40,9 @@ regenerates it from the template.
 | `SETUP.md` | this clone | You want Claude to interview you and personalise every file |
 | `BRAIN.md` | nothing at all | You cannot reach this repo |
 
+All three ask, as their first question, which language your companion should speak. Everything in
+this repo is English; that answer is what decides how the thing you build talks back to you.
+
 `BRAIN.md` is the whole system as one self-contained file: hooks, `CLAUDE.md`, seed memory,
 settings for both platform forms, launchers, per-platform branches, all inline. Hand its contents
 to Claude Code and say "bunu uygula". No clone, no network, no download. That is the copy to send
@@ -56,14 +59,21 @@ session ended without a memory write and leaves a marker the next `session-start
 The vault files are the source of truth. mem0, if you enable it, is a searchable index on top and
 never more than that.
 
+`.claude/backup.sh` commits and pushes whatever changed, refusing to commit the API key file or
+anything with an em dash in it, and pulling before it pushes so a push is never rejected. The
+wizard offers to schedule it hourly: a scheduled task on Windows, a systemd user timer on Linux,
+a launchd agent on macOS.
+
 ## Layout
 
 ```
 template/            the vault scaffold, copied to its real home during setup
   .claude/hooks/     the continuity engine (session-start, prompt-counter, session-end)
+  .claude/backup.sh  commit and push the vault, scheduled hourly during setup
   .claude/semantic-memory.py   optional mem0 recall bridge
 hermes/skills/       the same memory protocol, as a hermes skill
 scripts/install.*    the setup wizard, one per platform
+scripts/schedule-backup.*    registers the hourly backup, one per platform
 scripts/             desktop launchers and the hermes installer
 SETUP.md             the runbook Claude follows, needs this clone
 BRAIN.md             the same build as one self-contained file, needs nothing

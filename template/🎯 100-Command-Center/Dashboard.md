@@ -5,16 +5,16 @@ type: dashboard
 ---
 # 🧠 {{OS_NAME}}
 
-Hoş geldin {{USER_NAME}}. Bu senin ikinci beynin.
+Welcome, {{USER_NAME}}. This is your second brain.
 
-## Hızlı bağlantılar
+## Quick links
 - 📥 [[📥 000-Inbox/Dump/|Capture]]
-- 🏰 [[🏰 300-Projects/|Projeler]]
-- 🧠 [[🧠 500-Knowledge/|Bilgi]]
+- 🏰 [[🏰 300-Projects/|Projects]]
+- 🧠 [[🧠 500-Knowledge/|Knowledge]]
 - 🔮 [[🔮 850-Companion/Core|{{COMPANION}}]]
 
-## Nasıl kullanılır
-Bu klasörde terminal aç ve `claude` çalıştır, sonra konuş. {{COMPANION}} her şeyi hatırlar,
-düzenler, üstüne koyar. Notları sen yönetmezsin - konuşursun, o organize eder.
+## How to use it
+Open a terminal in this folder, run `claude`, and talk. {{COMPANION}} remembers, files things,
+and builds on yesterday. You do not manage the notes, you have a conversation and it organizes.
 
-> Masaüstündeki 🧠 ikonu bu vault'u tek tıkla Obsidian'da açar.
+> The 🧠 icon on your desktop opens this vault in Obsidian in one click.

@@ -9,9 +9,11 @@
 
 ## Rules
 
-1. **Speak Turkish to the user.** Match whatever language they write in, but default to Turkish,
-   direct and warm. This file is English so the instructions stay precise; the system you build
-   talks to them in Turkish.
+1. **Ask for their language first, then use it.** PHASE 1 question 1 settles it. Ask that one
+   question in whatever language the machine's locale suggests, and speak their answer for the
+   rest of the run, direct and warm. This file is English so the instructions stay precise;
+   translate the questions and the closing report as you go. What you write into the vault stays
+   English, apart from what the user dictates.
 2. **Interview first, build second.** PHASE 1 before you touch the filesystem.
 3. **Never destroy.** If a target folder or file exists, show it and ask. Default to skip, never
    silent overwrite.
@@ -21,9 +23,9 @@
 7. **No em dash (U+2014)** in anything you write here or into the vault. Spaced hyphen, comma,
    colon, or rewrite.
 
-Placeholders: `{{OS_NAME}}` `{{USER_NAME}}` `{{USER_BIO}}` `{{COMPANION}}` `{{VAULT_PATH}}`
-`{{TODAY}}` `{{USER_ID}}` `{{VENV_PYTHON}}` and, on Windows only, `{{BASH_PATH}}`
-`{{VAULT_PATH_FWD}}`.
+Placeholders: `{{LANGUAGE}}` `{{OS_NAME}}` `{{USER_NAME}}` `{{USER_BIO}}` `{{COMPANION}}`
+`{{VAULT_PATH}}` `{{TODAY}}` `{{USER_ID}}` `{{VENV_PYTHON}}` and, on Windows only,
+`{{BASH_PATH}}` `{{VAULT_PATH_FWD}}`.
 
 ---
 
@@ -85,15 +87,17 @@ Verify before continuing: `& $bash -c "echo ok"` must print `ok`. That path is `
 
 ## PHASE 1 - Interview
 
-Turkish, conversational, not a form.
+Conversational, not a form. Translate these into the user's language as you ask them.
 
-1. **İsmin ne?** -> `{{USER_NAME}}` (lowercased it also becomes `{{USER_ID}}`, used by mem0)
-2. **Ne iş yapıyorsun, bu beyni en çok ne için kullanacaksın?** (1-2 cümle) -> `{{USER_BIO}}`
-3. **AI ortağına ne isim vermek istersin?** -> `{{COMPANION}}`
-4. **Kapsam:** core herkeste var. Opsiyonel: `⚔️ 200-Goals` (hedefler, OKR),
-   `🔐 400-Vault` (finans, abonelikler), `💪 700-Body` (antrenman, beslenme),
-   `🧘 800-Mind` (yansımalar, ilkeler).
-5. **Semantik hafıza (mem0) ekleyelim mi?** Explain honestly: the file-based memory works with no
+1. **Which language should your companion speak to you in?** -> `{{LANGUAGE}}`. Ask this one
+   first, in whatever the locale suggests, then switch to their answer. Free text, not a menu.
+2. **What is your name?** -> `{{USER_NAME}}` (lowercased it also becomes `{{USER_ID}}`, used by mem0)
+3. **What do you do, and what will you use this brain for most?** (1-2 sentences) -> `{{USER_BIO}}`
+4. **What do you want to call your AI companion?** -> `{{COMPANION}}`
+5. **Scope:** everyone gets core. Optional: `⚔️ 200-Goals` (goals, OKRs),
+   `🔐 400-Vault` (finances, subscriptions), `💪 700-Body` (training, nutrition),
+   `🧘 800-Mind` (reflections, principles).
+6. **Add semantic memory (mem0)?** Explain honestly: the file-based memory works with no
    API and is enough for most people. mem0 adds a semantic search layer on top; the base tier is
    free, no credit card. Recommended, but optional.
 
@@ -250,7 +254,7 @@ THREADS=""
 
 REFLECTION=""
 if [ -f "$STATE_DIR/needs_reflection" ]; then
-  REFLECTION="⚠️ Önceki oturum hafıza güncellemeden bitti: $(cat "$STATE_DIR/needs_reflection"). Anlamlı bir şey olduysa 🔮 850-Companion dosyalarını güncelle."
+  REFLECTION="⚠️ The previous session ended without a memory write: $(cat "$STATE_DIR/needs_reflection"). If anything mattered, update the 🔮 850-Companion files."
   rm -f "$STATE_DIR/needs_reflection"
 fi
 
@@ -287,7 +291,7 @@ COUNT=0; [ -f "$STATE_DIR/prompt_count" ] && COUNT=$(cat "$STATE_DIR/prompt_coun
 COUNT=$((COUNT + 1)); echo "$COUNT" > "$STATE_DIR/prompt_count"
 
 if [ "$COUNT" -eq 15 ]; then
-  emit_context "UserPromptSubmit" "[Memory] Oturum uzadı. Bitirirken Last-Session.md ve Threads.md güncellemeyi unutma."
+  emit_context "UserPromptSubmit" "[Memory] This session is running long. Before it ends, update Last-Session.md and Threads.md."
 fi
 exit 0
 ```
@@ -314,7 +318,7 @@ if [ -f "$MEM_DIR/Last-Session.md" ]; then
 fi
 
 if [ "$PROMPTS" -ge 5 ] && [ "$MODIFIED" -eq 0 ]; then
-  echo "Oturum hafıza güncellemeden bitti. Prompt: $PROMPTS. $(date '+%Y-%m-%d %H:%M')" > "$STATE_DIR/needs_reflection"
+  echo "session ended without a memory write, $PROMPTS prompts, $(date '+%Y-%m-%d %H:%M')" > "$STATE_DIR/needs_reflection"
 fi
 
 rm -f "$STATE_DIR/session_start_time" "$STATE_DIR/prompt_count"
@@ -532,19 +536,19 @@ type: dashboard
 ---
 # 🧠 {{OS_NAME}}
 
-Hoş geldin {{USER_NAME}}. Bu senin ikinci beynin.
+Welcome, {{USER_NAME}}. This is your second brain.
 
-## Hızlı bağlantılar
+## Quick links
 - 📥 [[📥 000-Inbox/Dump/|Capture]]
-- 🏰 [[🏰 300-Projects/|Projeler]]
-- 🧠 [[🧠 500-Knowledge/|Bilgi]]
+- 🏰 [[🏰 300-Projects/|Projects]]
+- 🧠 [[🧠 500-Knowledge/|Knowledge]]
 - 🔮 [[🔮 850-Companion/Core|{{COMPANION}}]]
 
-## Nasıl kullanılır
-Bu klasörde terminal aç ve `claude` çalıştır, sonra konuş. {{COMPANION}} her şeyi hatırlar,
-düzenler, üstüne koyar. Notları sen yönetmezsin - konuşursun, o organize eder.
+## How to use it
+Open a terminal in this folder, run `claude`, and talk. {{COMPANION}} remembers, files things,
+and builds on yesterday. You do not manage the notes, you have a conversation and it organizes.
 
-> Masaüstündeki 🧠 ikonu bu vault'u tek tıkla Obsidian'da açar.
+> The 🧠 icon on your desktop opens this vault in Obsidian in one click.
 ```
 
 **`📋 Templates/Note.md`**
@@ -701,6 +705,109 @@ and must stay uncommitted. Verify:
 
 ---
 
+## PHASE 10b - Backups
+
+The vault is worth versioning. Write `{{VAULT_PATH}}/.claude/backup.sh`, `chmod +x` it, and
+offer to schedule it hourly. Only offer the schedule if the vault has a remote to push to:
+check `git -C "{{VAULT_PATH}}" rev-parse '@{u}'` first.
+
+```bash
+#!/bin/bash
+# Vault backup - commit anything that changed, take the remote's work, push.
+set -u
+
+# Kept on its own line: "${1:-{{VAULT_PATH}}}" would not parse before substitution.
+DEFAULT_VAULT="{{VAULT_PATH}}"
+VAULT_DIR="${1:-$DEFAULT_VAULT}"
+cd "$VAULT_DIR" || { echo "no vault at: $VAULT_DIR" >&2; exit 1; }
+[ -d .git ] || { echo "not a git repo: $VAULT_DIR" >&2; exit 1; }
+git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 || {
+  echo "no upstream branch. Set one with: git push -u origin HEAD" >&2; exit 1; }
+
+git add -A
+
+if git diff --cached --quiet; then
+  echo "nothing changed"
+else
+  if git diff --cached --name-only | grep -q "settings.local.json"; then
+    echo "STOPPED: settings.local.json is staged (it holds the API key)" >&2
+    git reset -q; exit 1
+  fi
+  emdash_hits=$(git diff --cached --name-only -z \
+    | xargs -0 -r grep -Il "$(printf '\xe2\x80\x94')" 2>/dev/null)
+  if [ -n "$emdash_hits" ]; then
+    echo "STOPPED: em dash (U+2014) found in:" >&2
+    printf '%s\n' "$emdash_hits" | sed 's/^/  /' >&2
+    git reset -q; exit 1
+  fi
+  git commit -q -m "backup: $(date '+%Y-%m-%d %H:%M')"
+fi
+
+# Take the remote's commits before pushing ours. Without this, anything committed
+# elsewhere makes every later push a rejected non-fast-forward, and -q means it
+# fails without saying anything. Runs even with nothing to commit, so a quiet day
+# still heals the drift.
+if ! git pull --rebase -q origin HEAD; then
+  git rebase --abort 2>/dev/null
+  echo "STOPPED: pull --rebase failed, resolve by hand. Committed locally, not pushed." >&2
+  exit 1
+fi
+
+if [ -n "$(git log '@{u}..HEAD' --oneline 2>/dev/null)" ]; then
+  git push -q origin HEAD || { echo "STOPPED: push failed." >&2; exit 1; }
+  echo "backed up: $(git log -1 --format=%h)"
+else
+  echo "nothing to push"
+fi
+```
+
+### Scheduling it hourly
+
+Ask before doing this: it is a persistent change to the user's machine.
+
+**Linux**, a systemd user timer in `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/`:
+
+```ini
+# {{OS_NAME}}-backup.service
+[Unit]
+Description={{OS_NAME}} vault backup
+[Service]
+Type=oneshot
+ExecStart=/bin/bash {{VAULT_PATH}}/.claude/backup.sh {{VAULT_PATH}}
+```
+```ini
+# {{OS_NAME}}-backup.timer
+[Unit]
+Description=Hourly {{OS_NAME}} vault backup
+[Timer]
+OnCalendar=hourly
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+Then `systemctl --user daemon-reload && systemctl --user enable --now {{OS_NAME}}-backup.timer`.
+A user timer only runs while the user is logged in. Mention `loginctl enable-linger` as an
+option, do not run it: that is a persistent system change of its own.
+
+**macOS**, a launchd agent at `~/Library/LaunchAgents/lol.aethrom.backup.plist` with
+`ProgramArguments` of `/bin/bash`, the script path and the vault path, plus
+`<key>StartInterval</key><integer>3600</integer>`. Load it with `launchctl load`.
+
+**Windows**, a per-user scheduled task. It must call Git Bash, not `System32\bash.exe`:
+
+```powershell
+$action  = New-ScheduledTaskAction -Execute "{{BASH_PATH}}" -Argument '"{{VAULT_PATH_FWD}}/.claude/backup.sh" "{{VAULT_PATH_FWD}}"'
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Hours 1)
+$set     = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+Register-ScheduledTask -TaskName "{{OS_NAME}} Vault Backup" -Action $action -Trigger $trigger -Settings $set -Force
+```
+
+Tell the user plainly: nothing announces a failed backup except its exit code. On Windows that
+is `Get-ScheduledTaskInfo -TaskName "{{OS_NAME}} Vault Backup"`, on Linux
+`systemctl --user list-timers`.
+
+---
+
 ## PHASE 11 - Verify and report
 
 ```bash
@@ -712,14 +819,14 @@ bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"          # one line of JSON
 grep -rl '{{' "{{VAULT_PATH}}" || echo "all placeholders resolved"
 ```
 
-Then report to the user, in Turkish:
+Then report to the user, in `{{LANGUAGE}}`:
 
-- ✅ **Ne kuruldu:** klasörler, hook'lar, hafıza dosyaları, companion'ın adı, 🧠 kısayolu
-- ▶️ **İlk çalıştırma:** Obsidian'ı aç, vault olarak `{{VAULT_PATH}}` seç. Bu, vault'u Obsidian'a
-  bir kez tanıtır; 🧠 ikonu bundan sonra tek tıkla açar. Sonra o klasörde `claude` çalıştır.
-- ✨ **Sihri göster:** Bir şey konuş, `/exit` yap, tekrar `claude` aç. {{COMPANION}} geçen oturumu
-  hatırlıyor olacak. Devamlılık, farkın ta kendisi.
-- ⚠️ Atlanan veya başarısız olan opsiyonel adımlar varsa (ikon, mem0, Obsidian kurulumu), tek tek
-  söyle. Sessizce geçme.
+- ✅ **What was built:** folders, hooks, memory files, the companion's name, the 🧠 shortcut
+- ▶️ **First run:** open Obsidian and pick `{{VAULT_PATH}}` as a vault. That introduces it to
+  Obsidian once; the 🧠 icon opens it in one click from then on. Then run `claude` in that folder.
+- ✨ **Show them the magic:** say something, `/exit`, open `claude` again. {{COMPANION}} will
+  remember the last session. Continuity is the whole difference.
+- ⚠️ Name every optional step that was skipped or failed (icon, mem0, Obsidian install, the
+  scheduled backup), one by one. Do not pass over them silently.
 
 Done. You just gave someone a second brain that remembers.
