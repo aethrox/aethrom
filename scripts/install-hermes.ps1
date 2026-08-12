@@ -7,8 +7,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-if (-not (Test-Path $VaultPath)) { throw "vault yok: $VaultPath" }
-if (-not (Test-Path $HermesHome)) { throw "hermes yok: $HermesHome" }
+if (-not (Test-Path $VaultPath)) { throw "no vault at: $VaultPath" }
+if (-not (Test-Path $HermesHome)) { throw "no hermes at: $HermesHome" }
 
 $skillsDir = (Resolve-Path (Join-Path $PSScriptRoot '..\hermes\skills')).Path
 $configPath = Join-Path $HermesHome 'config.yaml'
@@ -19,18 +19,18 @@ $config = Get-Content $configPath -Raw
 $needle = $skillsDir.Replace('\', '\\')
 
 if ($config -match [regex]::Escape($skillsDir) -or $config -match [regex]::Escape($needle)) {
-  Write-Output "external_dirs: zaten kayitli, atlandi"
+  Write-Output "external_dirs: already registered, skipped"
 }
 else {
   Copy-Item $configPath "$configPath.bak.$(Get-Date -Format 'yyyyMMdd_HHmmss')"
   # skills:\n  external_dirs: []   ->   a one-entry list
   $pattern = "(?m)^(skills:\r?\n(?:[ \t]+.*\r?\n)*?[ \t]+external_dirs:)[ \t]*\[\][ \t]*$"
   if ($config -notmatch $pattern) {
-    throw "config.yaml icinde 'skills: external_dirs: []' bulunamadi. Elle ekle: external_dirs: ['$skillsDir']"
+    throw "no 'skills: external_dirs: []' in config.yaml. Add it by hand: external_dirs: ['$skillsDir']"
   }
   $config = [regex]::Replace($config, $pattern, "`$1`r`n    - '$skillsDir'")
   Set-Content -Path $configPath -Value $config -Encoding utf8 -NoNewline
-  Write-Output "external_dirs: eklendi -> $skillsDir"
+  Write-Output "external_dirs: added -> $skillsDir"
 }
 
 # --- 2. point hermes at the vault -------------------------------------------
@@ -38,12 +38,12 @@ $envLines = if (Test-Path $envPath) { Get-Content $envPath } else { @() }
 if ($envLines -match '^\s*OBSIDIAN_VAULT_PATH=') {
   $envLines = $envLines -replace '^\s*OBSIDIAN_VAULT_PATH=.*', "OBSIDIAN_VAULT_PATH=$VaultPath"
   Set-Content -Path $envPath -Value $envLines -Encoding utf8
-  Write-Output "OBSIDIAN_VAULT_PATH guncellendi -> $VaultPath"
+  Write-Output "OBSIDIAN_VAULT_PATH updated -> $VaultPath"
 }
 else {
   Add-Content -Path $envPath -Value "OBSIDIAN_VAULT_PATH=$VaultPath" -Encoding utf8
-  Write-Output "OBSIDIAN_VAULT_PATH eklendi -> $VaultPath"
+  Write-Output "OBSIDIAN_VAULT_PATH added -> $VaultPath"
 }
 
 Write-Output ""
-Write-Output "Bitti. Hermes'i yeniden baslat, sonra 'gecen oturumda ne yaptik' diye sor."
+Write-Output "Done. Restart hermes, then ask it what you worked on last session."

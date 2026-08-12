@@ -9,9 +9,10 @@ to the next. You do not manage files, you talk to it.
 
 ## Quick start
 
-Clone it and run the wizard. It asks where the vault should live, pulls your existing vault repo
-if you have one, scaffolds a fresh vault from `template/` if you do not, wires the hooks for your
-platform, proves the hook actually runs, and offers the desktop launcher.
+Clone it and run the wizard. It asks which language your companion should speak and where the
+vault should live, pulls your existing vault repo if you have one, scaffolds a fresh vault from
+`template/` if you do not, wires the hooks for your platform, proves the hook actually runs, and
+offers the desktop launcher and an hourly backup.
 
 ```bash
 git clone https://github.com/aethrox/aethrom.git && cd aethrom
@@ -45,8 +46,8 @@ this repo is English; that answer is what decides how the thing you build talks 
 
 `BRAIN.md` is the whole system as one self-contained file: hooks, `CLAUDE.md`, seed memory,
 settings for both platform forms, launchers, per-platform branches, all inline. Hand its contents
-to Claude Code and say "bunu uygula". No clone, no network, no download. That is the copy to send
-to someone who does not have access here.
+to Claude Code and tell it to apply the file. No clone, no network, no download. That is the copy
+to send to someone who does not have access here.
 
 ## How it works
 
@@ -74,7 +75,8 @@ up, and quiet again as soon as one succeeds.
 
 ```
 template/            the vault scaffold, copied to its real home during setup
-  .claude/hooks/     the continuity engine (session-start, prompt-counter, session-end)
+  .claude/hooks/     the continuity engine (session-start, prompt-counter, session-end,
+                     plus _common.sh, the portability shims they all source)
   .claude/backup.sh  commit and push the vault, scheduled hourly during setup
   .claude/semantic-memory.py   optional mem0 recall bridge
 hermes/skills/       the same memory protocol, as a hermes skill
@@ -90,6 +92,8 @@ BRAIN.md             the same build as one self-contained file, needs nothing
 | | Windows | Linux | macOS |
 |---|---|---|---|
 | Continuity hooks | ✅ verified | ✅ verified | ⚠️ untested |
+| `backup.sh` | ✅ verified | ⚠️ untested | ⚠️ untested |
+| Backup scheduler | ✅ verified (scheduled task) | ⚠️ untested (systemd user timer) | ⚠️ untested (launchd agent) |
 | Desktop launcher | ✅ verified (.lnk + 🧠 icon) | ⚠️ untested (.desktop) | ⚠️ untested (upstream applet) |
 | mem0 recall | ✅ verified | ⚠️ untested | ⚠️ untested |
 
@@ -97,6 +101,13 @@ Verified means it was actually executed on that platform. The hooks were run thr
 suite (context injection, reflection marker written, marker injected and cleared, no marker when
 memory was written, the 15-prompt nudge) on Git Bash 5.3 under Windows 11 and on Fedora 44 under
 WSL, and the emitted payload was parsed as JSON.
+
+`backup.sh` was exercised against a throwaway remote on Git Bash under Windows: the clean run, a
+push rejected because the clone was behind, a rebase conflict leaving no half-rebase, the failure
+marker holding one "since" timestamp across repeated failures, and the marker clearing on the next
+success. The Windows scheduler was registered and unregistered for real. The hooks' new
+backup-warning branch has only been run on Windows so far, so treat that one branch as unverified
+on Fedora even though the rest of the row is not.
 
 ### Portability decisions
 
@@ -145,6 +156,10 @@ refuses to commit a file containing one.
   carried over from upstream and reasoned about, not executed. Treat that column as best-effort.
 - **The Linux launcher is untested.** It was written against the freedesktop spec but never run on
   a desktop session; the WSL image used for hook testing is headless.
+- **The Linux and macOS backup schedulers are untested.** `schedule-backup.sh` writes a systemd
+  user timer and a launchd agent that were reasoned about, not executed. Only the Windows path was
+  registered for real. A systemd user timer also stops when you log out unless you enable linger,
+  which the script prints but deliberately does not do for you.
 - The `obsidian://` handler only resolves after the vault has been opened in Obsidian once, so the
   desktop launcher does nothing until then.
 - mem0 relevance scores are weak until enough memories accumulate. It is a recall index, not the
