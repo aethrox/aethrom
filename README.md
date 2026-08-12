@@ -1,4 +1,4 @@
-# aethrom-beyin
+# aethrom
 
 An Obsidian vault driven by Claude Code that **remembers across sessions**, with a scaffold and
 a build runbook that work on **Windows, Linux and macOS**.
@@ -28,9 +28,30 @@ git clone <this-repo> && cd aethrom-beyin && claude
 template/            the vault scaffold, copied to its real home during setup
   .claude/hooks/     the continuity engine (session-start, prompt-counter, session-end)
   .claude/semantic-memory.py   optional mem0 recall bridge
-scripts/             desktop launchers, one per platform
+hermes/skills/       the same memory protocol, as a hermes skill
+scripts/             desktop launchers and the hermes installer
 SETUP.md             the runbook Claude follows
 ```
+
+## Sharing the brain with hermes
+
+If you also run [hermes](https://github.com/NousResearch), it can share the same vault and the
+same memory files, so a thread one agent opens the other sees.
+
+```bash
+./scripts/install-hermes.sh ~/Documents/MyOS            # Linux/macOS
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-hermes.ps1 -VaultPath C:\Users\me\Documents\MyOS
+```
+
+The installer registers `hermes/skills/` in `skills.external_dirs` (so `git pull` updates the
+skill, with no copy to keep in sync) and sets `OBSIDIAN_VAULT_PATH`. It is idempotent and backs
+up `config.yaml` first, in hermes' own `config.yaml.bak.<timestamp>` style.
+
+**Continuity is not equal on both sides.** Claude Code has hooks, so its memory reads and reminders
+are enforced by the harness. Hermes has no hook system — `hooks/` is empty — so on that side the
+protocol is only as reliable as the skill the model chooses to follow.
 
 ## Platform support
 
