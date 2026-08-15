@@ -88,14 +88,38 @@ Claude Code is already installed - the user is running you. Don't reinstall it.
 ## PHASE 3 - Place the vault
 
 ```bash
-cp -R ./template/ "{{VAULT_PATH}}/"
+mkdir -p "{{VAULT_PATH}}"
+cp -R ./template/. "{{VAULT_PATH}}/"
 chmod +x "{{VAULT_PATH}}/.claude/hooks/"*.sh
 ```
-On Windows use `Copy-Item -Recurse`; `chmod` is a no-op there but the hooks still run,
-because they are invoked as `bash script.sh` rather than executed directly.
+```powershell
+# Windows
+New-Item -ItemType Directory -Force "{{VAULT_PATH}}" | Out-Null
+Copy-Item ".\template\*" "{{VAULT_PATH}}" -Recurse -Force
+```
+
+The trailing `/.` is not a typo: `cp -R ./template/ dest/` puts a `template/` folder *inside* an
+existing destination instead of copying the contents out. Check afterwards that `AGENTS.md` sits
+at the vault root and there is no `template` directory under it.
+
+`chmod` is a no-op on Windows, but the hooks still run there because they are invoked as
+`bash script.sh` rather than executed directly.
 
 Create only the optional scope folders the user picked:
 `⚔️ 200-Goals` · `🔐 400-Vault` · `💪 700-Body` · `🧘 800-Mind`
+
+Then make the vault a git repo. `backup.sh` refuses to run outside one, and PHASE 6b has nothing
+to schedule without it. The `.gitignore` came with the template, so the key file is already
+excluded:
+
+```bash
+git -C "{{VAULT_PATH}}" init -b main
+git -C "{{VAULT_PATH}}" add -A
+git -C "{{VAULT_PATH}}" commit -m "{{OS_NAME}}: initial vault"
+```
+
+If the commit fails because git has no identity on this machine, ask the user for the name and
+email to use and set them with `git config`. Do not guess them.
 
 ---
 
@@ -163,9 +187,28 @@ launcher does nothing until PHASE 8. Say so rather than letting the user think i
 
 ## PHASE 6b - Hourly backup
 
-Only if the vault has a remote to push to. Check with
-`git -C "{{VAULT_PATH}}" rev-parse '@{u}'`; if it fails, tell the user to
-`git push -u origin HEAD` first and schedule it afterwards.
+The backup pushes to a remote, so the vault needs one. PHASE 3 made it a repo; check whether it
+already tracks anything with `git -C "{{VAULT_PATH}}" rev-parse '@{u}'`. If that fails, offer to
+set one up before scheduling.
+
+> **The repo must be private.** This vault holds notes, plans and possibly finances. Never create
+> it public, and say this out loud rather than assuming the user knows.
+
+With the `gh` CLI available and the user agreeing:
+
+```bash
+gh repo create "{{OS_NAME}}" --private --source "{{VAULT_PATH}}" --remote origin --push
+```
+
+Without `gh`, ask the user to create an empty **private** repo and paste its URL, then:
+
+```bash
+git -C "{{VAULT_PATH}}" remote add origin <url>
+git -C "{{VAULT_PATH}}" push -u origin main
+```
+
+If the user declines a remote, skip the rest of this phase and say the backup is not scheduled,
+so it does not look like it silently failed.
 
 ```bash
 # Linux (systemd user timer) and macOS (launchd agent)

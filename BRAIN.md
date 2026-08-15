@@ -167,6 +167,31 @@ Write `{{VAULT_PATH}}/.gitignore`:
 .obsidian/cache
 ```
 
+Write `{{VAULT_PATH}}/.gitattributes` too. Without it, a clone of this vault on Windows turns the
+hooks into CRLF files and their shebang stops working:
+
+```gitattributes
+# Shell and Python must stay LF even when checked out on Windows - a CRLF shebang
+# breaks the hooks on Linux and macOS, and Git Bash handles CRLF scripts badly.
+*.sh text eol=lf
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+*.png binary
+```
+
+Then make the vault a git repo. `backup.sh` in PHASE 10b refuses to run outside one:
+
+```bash
+git -C "{{VAULT_PATH}}" init -b main
+git -C "{{VAULT_PATH}}" add -A
+git -C "{{VAULT_PATH}}" commit -m "{{OS_NAME}}: initial vault"
+```
+
+If the commit fails because git has no identity on this machine, ask the user for the name and
+email to use and set them with `git config`. Do not guess them.
+
 ---
 
 ## PHASE 4 - The continuity engine (hooks, Claude Code only)
@@ -776,8 +801,19 @@ and must stay uncommitted. Verify:
 ## PHASE 10b - Backups
 
 The vault is worth versioning. Write `{{VAULT_PATH}}/.claude/backup.sh`, `chmod +x` it, and
-offer to schedule it hourly. Only offer the schedule if the vault has a remote to push to:
-check `git -C "{{VAULT_PATH}}" rev-parse '@{u}'` first.
+offer to schedule it hourly.
+
+The backup pushes to a remote, so the vault needs one. PHASE 3 made it a repo; check whether it
+already tracks anything with `git -C "{{VAULT_PATH}}" rev-parse '@{u}'`. If not, offer to set one
+up: `gh repo create "{{OS_NAME}}" --private --source "{{VAULT_PATH}}" --remote origin --push` when
+the `gh` CLI is there, otherwise ask the user for the URL of an empty repo and
+`git remote add origin <url>` followed by `git push -u origin main`.
+
+> **The repo must be private.** This vault holds notes, plans and possibly finances. Never create
+> it public, and say this out loud rather than assuming the user knows.
+
+If the user declines a remote, skip the schedule and say the backup is not running, so it does
+not look like it silently failed.
 
 ```bash
 #!/bin/bash
