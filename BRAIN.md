@@ -31,19 +31,16 @@ Placeholders: `{{LANGUAGE}}` `{{OS_NAME}}` `{{USER_NAME}}` `{{USER_BIO}}` `{{COM
 
 ## FAST PATH - use the repo if you have it
 
-The whole scaffold plus a setup wizard lives in the aethrom repo. If you can reach it, this is
-faster and less error-prone than building by hand:
+The whole scaffold lives in the aethrom repo. If you can reach it, this is faster and less
+error-prone than building by hand:
 
 ```bash
 git clone <aethrom-repo-url> && cd aethrom
-./scripts/install.sh                 # Linux and macOS
-```
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-For the interview-driven build where you write the prose yourself, follow `SETUP.md` in that
-clone instead. Either way, **stop reading this file** once you are on the fast path.
+Then follow `SETUP.md` in that clone: it interviews the user and personalises every file, instead
+of the placeholder-filling this document does below. **Stop reading this file** once you are on
+the fast path.
 
 Everything below is the fallback: it produces the same system with no repo, no network, and
 nothing to download.

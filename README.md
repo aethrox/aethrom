@@ -23,39 +23,22 @@ Then tell Claude Code: "Follow SETUP.md to set this up for me."
 
 This is the version worth taking: the interview means `CLAUDE.md`, the companion's name, and every
 placeholder in the vault come out written for you specifically, not filled in with defaults you
-will edit later by hand.
+will edit later by hand. It also detects Windows, Linux and macOS itself and branches accordingly,
+so there is no separate script to maintain per platform.
 
-In a hurry, or scripting a second machine, `scripts/install.*` runs the same wiring without the
-interview and without opening Claude Code:
+If the target vault path already exists, Claude shows it to you and asks before touching anything.
+A vault pulled from git will not carry `settings.local.json`, since that file holds the API key and
+is gitignored, so the run regenerates it from the template.
 
-```bash
-./scripts/install.sh                 # Linux and macOS
-```
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-```
-
-Non-interactive, for scripting or a second machine:
-
-```bash
-./scripts/install.sh --repo https://github.com/you/your-vault.git --path ~/Documents/MyOS --name MyOS
-```
-
-It is safe to re-run. An existing vault is detected and only the wiring is rechecked, and nothing
-already in the target directory is overwritten. A vault pulled from git will not carry
-`settings.local.json`, since that file holds the API key and is gitignored, so the wizard
-regenerates it from the template.
-
-## Three ways in
+## Two ways in
 
 | Path | Needs | Use when |
 |---|---|---|
-| `SETUP.md` | this clone | You want Claude to interview you and personalise every file |
-| `scripts/install.*` | this clone | You want it working in a minute, no questions about prose |
+| `SETUP.md` | this clone | The normal case: you have the repo and want it personalised |
 | `BRAIN.md` | nothing at all | You cannot reach this repo |
 
-All three ask, as their first question, which language your companion should speak. Everything in
-this repo is English; that answer is what decides how the thing you build talks back to you.
+Both ask, as their first question, which language your companion should speak. Everything in this
+repo is English; that answer is what decides how the thing you build talks back to you.
 
 `BRAIN.md` is the whole system as one self-contained file: hooks, `CLAUDE.md`, seed memory,
 settings for both platform forms, launchers, per-platform branches, all inline. Hand its contents
@@ -74,9 +57,9 @@ The vault files are the source of truth. mem0, if you enable it, is a searchable
 never more than that.
 
 `.claude/backup.sh` commits and pushes whatever changed, refusing to commit the API key file or
-anything with an em dash in it, and pulling before it pushes so a push is never rejected. The
-wizard offers to schedule it hourly: a scheduled task on Windows, a systemd user timer on Linux,
-a launchd agent on macOS.
+anything with an em dash in it, and pulling before it pushes so a push is never rejected. SETUP.md
+offers to schedule it hourly: a scheduled task on Windows, a systemd user timer on Linux, a
+launchd agent on macOS.
 
 A scheduled backup has nowhere to print, so a broken one is normally invisible until the day you
 need it. `backup.sh` writes the reason it stopped into the hook state directory, and
@@ -94,9 +77,8 @@ template/            the vault scaffold, copied to its real home during setup
   .claude/run-hidden.vbs       Windows only: runs the hourly backup with no console window
   .claude/semantic-memory.py   optional mem0 recall bridge
 hermes/skills/       the same memory protocol, as a hermes skill
-scripts/install.*    the setup wizard, one per platform
-scripts/schedule-backup.*    registers the hourly backup, one per platform
-scripts/             desktop launchers and the hermes installer
+scripts/schedule-backup.*    registers the hourly backup, one per platform, called from SETUP.md
+scripts/             desktop launchers (called from SETUP.md) and the hermes installer (opt-in, run by hand)
 SETUP.md             the runbook Claude follows, needs this clone
 BRAIN.md             the same build as one self-contained file, needs nothing
 ```
