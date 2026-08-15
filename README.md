@@ -1,16 +1,16 @@
 # aethrom
 
-An Obsidian vault driven by Claude Code that **remembers across sessions**, with a scaffold and a
-build runbook that work on **Windows, Linux and macOS**.
+An Obsidian vault that **remembers across sessions**, driven by whichever coding agent you already
+use, with a scaffold and a build runbook that work on **Windows, Linux and macOS**.
 
 Most chat assistants forget you every session. This does not. A local Obsidian vault holds
-everything you know and do, Claude Code drives it, and three hooks carry memory from one session
-to the next. You do not manage files, you talk to it.
+everything you know and do, an agent drives it, and four memory files carry what matters from one
+session to the next. You do not manage files, you talk to it.
 
 ## Quick start
 
-Open Claude Code in any folder and paste this. You do not run anything yourself, the agent clones
-the repo and builds the vault from there.
+Open your coding agent in any folder and paste this. You do not run anything yourself, the agent
+clones the repo and builds the vault from there.
 
 ```text
 Clone https://github.com/aethrox/aethrom.git, work from inside that clone, and follow its
@@ -18,17 +18,17 @@ SETUP.md to set up my second brain.
 ```
 
 It interviews you first: which language your companion should speak, who you are, what to call it,
-where the vault should live. Then it scaffolds the vault from `template/`, writes your answers into
-every file instead of leaving a placeholder, wires the hooks for your platform, and proves the hook
-actually runs. The desktop launcher and the hourly backup are offered at the end.
+where the vault should live. Then it scaffolds the vault from `template/` and writes your answers
+into every file instead of leaving a placeholder. In Claude Code it also wires the hooks for your
+platform and proves one runs. The desktop launcher and the hourly backup are offered at the end.
 
-The interview is the point: `CLAUDE.md`, the companion's name and every placeholder come out
+The interview is the point: `AGENTS.md`, the companion's name and every placeholder come out
 written for you, not filled with defaults you edit later. SETUP.md detects the platform itself, so
 there is no per-platform installer to maintain.
 
-If the target vault path already exists, Claude shows it to you and asks before touching anything.
-`settings.local.json` holds the API key and is gitignored, so it is written from the template on
-every run rather than ever travelling with a vault.
+If the target vault path already exists, the agent shows it to you and asks before touching
+anything. `settings.local.json` holds the API key and is gitignored, so it is written from the
+template on every run rather than ever travelling with a vault.
 
 ## Two ways in
 
@@ -40,20 +40,23 @@ every run rather than ever travelling with a vault.
 Both ask, as their first question, which language your companion should speak. Everything in this
 repo is English; that answer is what decides how the thing you build talks back to you.
 
-`BRAIN.md` is the whole system as one self-contained file: hooks, `CLAUDE.md`, seed memory,
+`BRAIN.md` is the whole system as one self-contained file: `AGENTS.md`, the hooks, seed memory,
 settings for both platform forms, launchers, per-platform branches, all inline. Hand its contents
-to Claude Code and tell it to apply the file. No clone, no network, no download. That is the copy
-to send to someone who does not have access here.
+to an agent and tell it to apply the file. No clone, no network, no download. That is the copy to
+send to someone who does not have access here.
 
 ## How it works
 
-The continuity engine is three hooks and four memory files. `session-start.sh` reads
+Continuity is four markdown files and a protocol. `Core.md`, `Last-Session.md`, `Threads.md` and
+`Journal.md` live in a folder named after your companion, `🔮 850-Aether/` for Aether, and
+`AGENTS.md` tells the agent to read them when a session opens and write them back before it ends.
+Nothing there is specific to any one agent.
+
+In Claude Code three hooks make that automatic rather than voluntary. `session-start.sh` reads
 `Last-Session.md` and `Threads.md` and injects them as context, so the model opens every session
 knowing where the last one stopped. `prompt-counter.sh` nudges once at fifteen prompts to write
 memory before the session ends. `session-end.sh` notices when a session ended without a memory
 write and leaves a marker the next `session-start.sh` surfaces.
-
-Those four files live in a folder named after your companion: `🔮 850-Aether/` for Aether.
 
 The vault files are the source of truth. mem0, if you enable it, is a searchable index on top and
 never more than that.
@@ -73,6 +76,8 @@ up, and quiet again as soon as one succeeds.
 
 ```
 template/            the vault scaffold, copied to its real home during setup
+  AGENTS.md          the companion's whole context: identity, structure, memory protocol
+  CLAUDE.md          three lines pointing Claude Code at AGENTS.md
   .claude/hooks/     the continuity engine (session-start, prompt-counter, session-end,
                      plus _common.sh, the portability shims they all source)
   .claude/backup.sh  commit and push the vault, scheduled hourly during setup
@@ -81,7 +86,7 @@ template/            the vault scaffold, copied to its real home during setup
 hermes/skills/       the same memory protocol, as a hermes skill
 scripts/             desktop launchers and the backup scheduler, one per platform, both called
                      from SETUP.md, plus the hermes installer (opt-in, run by hand)
-SETUP.md             the runbook Claude follows, needs this clone
+SETUP.md             the runbook the agent follows, needs this clone
 BRAIN.md             the same build as one self-contained file, needs nothing
 ```
 
@@ -89,7 +94,7 @@ BRAIN.md             the same build as one self-contained file, needs nothing
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Continuity hooks | ✅ verified | ✅ verified | ⚠️ untested |
+| Continuity hooks (Claude Code) | ✅ verified | ✅ verified | ⚠️ untested |
 | `backup.sh` | ✅ verified | ✅ verified | ⚠️ untested |
 | Backup scheduler | ✅ verified (scheduled task) | ✅ verified (systemd user timer) | ⚠️ untested (launchd agent) |
 | Desktop launcher | ✅ verified (.lnk + 🧠 icon) | ⚠️ partially verified (.desktop) | ⚠️ untested (upstream applet) |
@@ -129,7 +134,21 @@ Verified means it was actually executed on that platform, not reasoned about. Wh
 > On Windows the hooks must be invoked with Git Bash. `C:\Windows\System32\bash.exe` is the WSL
 > launcher: it cannot see the vault at a Windows path and the hooks will silently do nothing.
 
-## Sharing the brain with hermes
+## Which agent drives it
+
+The vault ships two context files. `AGENTS.md` is the whole thing: identity, vault structure,
+conventions, the memory protocol. `CLAUDE.md` is three lines pointing at it, because Claude Code
+loads that name automatically. One source, no copy to keep in sync.
+
+Any agent that reads `AGENTS.md` picks up the protocol. That was verified here with Codex, which
+applied an `AGENTS.md` rule without being told the file existed. Cursor, Gemini CLI and Copilot
+read the same filename by convention, but none of them were tested.
+
+What actually differs is enforcement. Claude Code has hooks, so the memory read and the write
+reminder come from the harness whether the model cooperates or not. Everywhere else the protocol
+is only as reliable as the agent choosing to follow what `AGENTS.md` says.
+
+### Sharing the brain with hermes
 
 If you also run [hermes](https://github.com/NousResearch), it can share the same vault and the
 same memory files, so a thread one agent opens the other sees.
@@ -146,9 +165,9 @@ skill and there is no copy to keep in sync, and sets `OBSIDIAN_VAULT_PATH`. It i
 backs up `config.yaml` first, in hermes' own `config.yaml.bak.<timestamp>` style.
 
 > [!IMPORTANT]
-> Continuity is not equal on both sides. Claude Code has hooks, so its memory reads and reminders
-> are enforced by the harness. Hermes has no hook system, `hooks/` is empty, so on that side the
-> protocol is only as reliable as the skill the model chooses to follow.
+> Hermes does not read `AGENTS.md`, it loads the skill instead. That means the same protocol is
+> written down twice, in `AGENTS.md` and in `hermes/skills/aethrom/memory/SKILL.md`, and a change
+> to one has to be made in the other by hand.
 
 ## House rule: no em dash
 
@@ -164,6 +183,9 @@ refuses to commit a file containing one.
   never executed; there is no macOS machine here. Treat that column as best-effort.
 - **A systemd user timer stops when you log out** unless you enable linger, which
   `schedule-backup.sh` prints as an option but deliberately does not do for you.
+- **Outside Claude Code the memory protocol is not enforced, only written down.** Hooks are what
+  make it automatic, and no other agent has them. `AGENTS.md` was confirmed to reach Codex on this
+  machine; Cursor, Gemini CLI and Copilot were not tested at all.
 - **Setting up a second machine against a vault you already have is not covered.** `SETUP.md`
   builds a new vault from `template/`; it does not clone an existing one. By hand that means
   cloning the vault, making the hooks executable, and writing `settings.local.json` from the

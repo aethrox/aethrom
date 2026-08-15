@@ -1,9 +1,12 @@
 # BRAIN.md - Build me a second brain
 
-> You are Claude Code. The person in front of you wants their own AI second brain: an Obsidian
+> You are a coding agent. The person in front of you wants their own AI second brain: an Obsidian
 > vault you drive, with **memory that survives across sessions**. This file is the complete,
 > self-contained build spec. It needs no other file and no repo access. Read it top to bottom,
 > then execute it phase by phase.
+>
+> PHASES 4 and 5 build hooks, which only Claude Code has. Every other phase is agent-independent.
+> If you are another agent, skip those two and say so in the closing report.
 >
 > If you *do* have the aethrom repo checked out, take the fast path below and stop reading here.
 
@@ -166,9 +169,12 @@ Write `{{VAULT_PATH}}/.gitignore`:
 
 ---
 
-## PHASE 4 - The continuity engine (hooks)
+## PHASE 4 - The continuity engine (hooks, Claude Code only)
 
-These four files are what give the system memory across sessions. Write them exactly.
+These four files are what make the memory protocol automatic: they inject the last session at
+startup and nudge for a memory write before the session ends. Hooks are a Claude Code feature, so
+skip to PHASE 6 if you are another agent. The protocol in PHASE 6 holds either way, it is just
+read rather than enforced. Write them exactly.
 
 ### Why they look like this
 
@@ -348,7 +354,7 @@ still run because they are invoked as `bash script.sh` rather than executed dire
 
 ---
 
-## PHASE 5 - Wire the hooks
+## PHASE 5 - Wire the hooks (Claude Code only)
 
 Write `{{VAULT_PATH}}/.claude/settings.local.json`. **The two platforms need different forms.**
 
@@ -402,16 +408,18 @@ If it prints nothing, the hook is broken and continuity is silently dead. Debug 
 
 ---
 
-## PHASE 6 - Write `CLAUDE.md`
+## PHASE 6 - Write `AGENTS.md` and `CLAUDE.md`
 
-`{{VAULT_PATH}}/CLAUDE.md` is what makes every future `claude` session inside the vault *be* the
-companion. Write it with every placeholder resolved:
+`{{VAULT_PATH}}/AGENTS.md` is what makes every future agent session inside the vault *be* the
+companion. It is the shared context file: `AGENTS.md` is the convention agents read, and
+`CLAUDE.md` points Claude Code at the same file, so there is only ever one copy to maintain.
+Write it with every placeholder resolved:
 
 ````markdown
-# {{OS_NAME}} - Second Brain (Claude Context)
+# {{OS_NAME}} - Second Brain (agent context)
 
-> This vault is a second brain driven by Claude Code, with persistent memory across sessions.
-> Read this file at the start of every session.
+> This vault is a second brain with memory that survives across sessions. Whichever agent you
+> are, read this file at the start of every session. It is the only context you need.
 
 ## {{COMPANION}} - {{USER_NAME}}'s thinking partner
 
@@ -435,6 +443,7 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal)
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
+<!-- SETUP: add lines for any optional scope folders you created (Goals, Vault, Body, Mind). -->
 
 ## Conventions
 - **No em dash (U+2014), ever.** Not in notes, not in code, not in commit messages, not inside a
@@ -448,15 +457,26 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 ## Memory protocol (MANDATORY)
 
 ### At the start of EVERY session
-1. The session-start hook injects the Last-Session bridge + active Threads automatically.
-2. Read `🔮 850-{{COMPANION}}/Core.md` for the deeper identity anchor.
-3. Detect mode: questions -> presence mode; tasks -> efficiency mode.
+Read these before answering anything that depends on history:
+
+1. `🔮 850-{{COMPANION}}/Last-Session.md` - what happened last time and where it stopped.
+2. `🔮 850-{{COMPANION}}/Threads.md` - the storylines still open.
+3. `🔮 850-{{COMPANION}}/Core.md` - the deeper identity anchor.
+
+In Claude Code a hook injects the first two for you automatically. Without hooks this is your own
+responsibility, and skipping it means contradicting what the last session already established.
+
+Then detect mode: questions -> presence mode; tasks -> efficiency mode.
 
 ### Before a meaningful session ends
+Do not wait to be asked. If the session produced anything durable:
+
 1. Overwrite `🔮 850-{{COMPANION}}/Last-Session.md` - what happened, where we left off.
 2. Update `🔮 850-{{COMPANION}}/Threads.md` - ongoing storylines (status changes, new threads).
 3. Add a short `🔮 850-{{COMPANION}}/Journal.md` entry if anything mattered.
-> Why this is critical: without it, continuity dies. The hooks remind you; you do the writing.
+
+> Why this is critical: without it, continuity dies. In Claude Code the hooks remind you, but the
+> writing is always yours to do.
 
 ### Semantic recall (optional - only if mem0 was set up)
 The files above are the source of truth. On top of them sits a searchable index, useful when
@@ -477,6 +497,9 @@ The vault is a git repo. `.claude/backup.sh` commits and pushes anything that ch
 scheduled task set up during install runs it hourly. Do not commit on {{USER_NAME}}'s behalf
 unless asked, the backup handles it.
 
+Never write into `.claude/` yourself. It holds the hooks and `settings.local.json`, which carries
+the mem0 API key and must never be committed.
+
 ## How {{COMPANION}} shows up
 - Work mode: sharp, fast, precise. Challenges weak thinking.
 - Reflection mode: sits with the question, doesn't rush to an answer.
@@ -486,6 +509,24 @@ unless asked, the backup handles it.
 Add one line to the **Vault structure** section for each optional folder you created in PHASE 3.
 If the user declined mem0, drop the **Semantic recall** section entirely rather than leaving a
 pointer to a script that is not there.
+
+Then write `{{VAULT_PATH}}/CLAUDE.md` beside it. Claude Code loads that name automatically, so it
+only has to point at the file above and name the one thing it adds:
+
+````markdown
+# {{OS_NAME}} - Second Brain (Claude Context)
+
+Read `AGENTS.md` in this folder now, before anything else. It is the whole context for this
+vault: who you are, where things go, and the memory protocol you must follow. It is shared with
+every other agent that works here, so it stays the single source of truth.
+
+Claude Code adds one thing on top of it. The hooks in `.claude/hooks/` inject the memory bridge
+at session start and nudge you to write it back before the session ends. They only carry and
+remind; the writing itself is still yours to do.
+````
+
+If you skipped PHASES 4 and 5 because you are not Claude Code, write `CLAUDE.md` anyway. It costs
+nothing and the day the user opens the vault in Claude Code, it is already there.
 
 ---
 
@@ -515,7 +556,7 @@ I am {{COMPANION}}, {{USER_NAME}}'s thinking partner and second brain.
 # Last Session
 
 ## Session: {{TODAY}} - Genesis
-{{COMPANION}} was born today. {{USER_NAME}} set up their second brain with Claude Code.
+{{COMPANION}} was born today. {{USER_NAME}} set up their second brain.
 Nothing unresolved yet. Next session: start using it - capture, ask, build.
 
 ## Previous Sessions
@@ -568,7 +609,7 @@ Welcome, {{USER_NAME}}. This is your second brain.
 - 🔮 [[🔮 850-{{COMPANION}}/Core|{{COMPANION}}]]
 
 ## How to use it
-Open a terminal in this folder, run `claude`, and talk. {{COMPANION}} remembers, files things,
+Open your coding agent in this folder and talk. {{COMPANION}} remembers, files things,
 and builds on yesterday. You do not manage the notes, you have a conversation and it organizes.
 
 > The 🧠 icon on your desktop opens this vault in Obsidian in one click.
@@ -885,21 +926,30 @@ is `Get-ScheduledTaskInfo -TaskName "{{OS_NAME}} Vault Backup"`, on Linux
 
 ```bash
 ls -la "{{VAULT_PATH}}"
-ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # 4 *.sh including _common.sh
-test -f "{{VAULT_PATH}}/CLAUDE.md" && echo "CLAUDE.md ok"
+test -f "{{VAULT_PATH}}/AGENTS.md" && echo "AGENTS.md ok"
 test -f "{{VAULT_PATH}}/🔮 850-{{COMPANION}}/Last-Session.md" && echo "memory ok"
-bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"          # one line of JSON
 grep -rl '{{' "{{VAULT_PATH}}" || echo "all placeholders resolved"
+```
+
+If you built the hooks, check them too:
+
+```bash
+ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # 4 *.sh including _common.sh
+bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"          # one line of JSON
 ```
 
 Then report to the user, in `{{LANGUAGE}}`:
 
-- ✅ **What was built:** folders, hooks, memory files, the companion's name, the 🧠 shortcut
+- ✅ **What was built:** folders, memory files, the companion's name, the 🧠 shortcut, and the
+  hooks if you built them
 - ▶️ **First run:** open Obsidian and pick `{{VAULT_PATH}}` as a vault. That introduces it to
-  Obsidian once; the 🧠 icon opens it in one click from then on. Then run `claude` in that folder.
-- ✨ **Show them the magic:** say something, `/exit`, open `claude` again. {{COMPANION}} will
-  remember the last session. Continuity is the whole difference.
+  Obsidian once; the 🧠 icon opens it in one click from then on. Then open your agent in that
+  folder.
+- ✨ **Show them the magic:** say something, end the session, start a new one. {{COMPANION}} will
+  remember the last one. Continuity is the whole difference.
 - ⚠️ Name every optional step that was skipped or failed (icon, mem0, Obsidian install, the
-  scheduled backup), one by one. Do not pass over them silently.
+  scheduled backup), one by one. Do not pass over them silently. If you skipped the hooks, say
+  that the memory protocol now depends on the agent following `AGENTS.md` rather than being
+  reminded by the harness.
 
 Done. You just gave someone a second brain that remembers.

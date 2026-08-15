@@ -1,8 +1,11 @@
 # SETUP.md - Activate this second brain (Claude Code runbook)
 
-> You are Claude Code, running inside a fresh clone of this repo. The user wants their own AI
+> You are a coding agent running inside a fresh clone of this repo. The user wants their own AI
 > second brain. The scaffold is in `./template/`. Interview them, copy it to its real home,
 > personalize it, and build the launcher.
+>
+> Most of this runbook is agent-independent. PHASE 4 is the exception: hooks are a Claude Code
+> feature. If you are another agent, skip it and say so in the final report.
 
 ## Rules
 0. **Ask for their language first, then use it.** PHASE 1 question 1 settles which language the
@@ -96,7 +99,12 @@ Create only the optional scope folders the user picked:
 
 ---
 
-## PHASE 4 - Wire up the hooks
+## PHASE 4 - Wire up the hooks (Claude Code only)
+
+Hooks are what make the memory protocol automatic: they inject the last session at startup and
+nudge for a memory write before the session ends. No other agent has them. If you are not Claude
+Code, skip to PHASE 5 and tell the user at the end that the protocol in `AGENTS.md` holds either
+way, it is just read rather than enforced.
 
 - **Linux/macOS:** `template/.claude/settings.json` already ships in the right form. Rename it to
   `settings.local.json` in the vault.
@@ -122,14 +130,16 @@ expect it post-personalization. Keep the emoji and the `850-` prefix exactly; on
 after the dash changes.
 
 Then replace every placeholder in every file under the vault. Files that contain them:
-`CLAUDE.md`, `🎯 100-Command-Center/Dashboard.md`, all of `🔮 850-{{COMPANION}}/*.md`, the
-three hooks, `.claude/backup.sh`, and `.claude/semantic-memory.py`. Then verify:
+`AGENTS.md`, `CLAUDE.md`, `🎯 100-Command-Center/Dashboard.md`, all of
+`🔮 850-{{COMPANION}}/*.md`, the three hooks, `.claude/backup.sh`, and
+`.claude/semantic-memory.py`. Then verify:
 
 ```bash
 grep -rl "{{" "{{VAULT_PATH}}" || echo "all placeholders resolved"
 ```
 
-Also add a line to the vault structure section of `CLAUDE.md` for each optional folder created.
+Also add a line to the vault structure section of `AGENTS.md` for each optional folder created.
+`CLAUDE.md` is a pointer to it and carries no structure of its own, so it needs nothing here.
 
 ---
 
@@ -205,16 +215,20 @@ gitignored and must stay uncommitted. Verify with:
 
 ```bash
 ls -la "{{VAULT_PATH}}"
-ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # 4 *.sh incl. _common.sh
-test -f "{{VAULT_PATH}}/CLAUDE.md" && echo "CLAUDE.md ok"
+test -f "{{VAULT_PATH}}/AGENTS.md" && echo "AGENTS.md ok"
 test -f "{{VAULT_PATH}}/🔮 850-{{COMPANION}}/Last-Session.md" && echo "memory ok"
+ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # only if you did PHASE 4
 ```
 
 Report to the user in `{{LANGUAGE}}`:
-- ✅ **What was built:** folders, hooks, memory files, the companion's name, the 🧠 shortcut
+- ✅ **What was built:** folders, memory files, the companion's name, the 🧠 shortcut, and the
+  hooks if you wired them
 - ▶️ **First run:** open Obsidian and pick `{{VAULT_PATH}}` as a vault. That introduces it to
-  Obsidian once; the 🧠 icon opens it in one click from then on. Then run `claude` in that folder.
-- ✨ **Show them the magic:** say something, `/exit`, open `claude` again. {{COMPANION}} will
-  remember the last session. Continuity is the whole difference.
+  Obsidian once; the 🧠 icon opens it in one click from then on. Then open your agent in that
+  folder.
+- ✨ **Show them the magic:** say something, end the session, start a new one. {{COMPANION}} will
+  remember the last one. Continuity is the whole difference.
 - ⚠️ Name every optional step that was skipped or failed (icon, mem0, Obsidian install, the
-  scheduled backup). Do not pass over them silently.
+  scheduled backup). Do not pass over them silently. If you skipped the hooks, say that the memory
+  protocol now depends on the agent following `AGENTS.md` rather than being reminded by the
+  harness.

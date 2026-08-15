@@ -14,7 +14,7 @@ Welcome, {{USER_NAME}}. This is your second brain.
 - 🔮 [[🔮 850-{{COMPANION}}/Core|{{COMPANION}}]]
 
 ## How to use it
-Open a terminal in this folder, run `claude`, and talk. {{COMPANION}} remembers, files things,
+Open your coding agent in this folder and talk. {{COMPANION}} remembers, files things,
 and builds on yesterday. You do not manage the notes, you have a conversation and it organizes.
 
 > The 🧠 icon on your desktop opens this vault in Obsidian in one click.
