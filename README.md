@@ -9,13 +9,26 @@ to the next. You do not manage files, you talk to it.
 
 ## Quick start
 
-Clone it and run the wizard. It asks which language your companion should speak and where the
-vault should live, pulls your existing vault repo if you have one, scaffolds a fresh vault from
-`template/` if you do not, wires the hooks for your platform, proves the hook actually runs, and
-offers the desktop launcher and an hourly backup.
+Clone it, open it in Claude Code, and hand it `SETUP.md`. It interviews you: which language your
+companion should speak, who you are, where the vault should live, pulls your existing vault repo
+if you have one or scaffolds a fresh one from `template/` if you do not, personalises every file it
+writes instead of leaving a placeholder in it, wires the hooks for your platform, proves the hook
+actually runs, and offers the desktop launcher and an hourly backup.
 
 ```bash
 git clone https://github.com/aethrox/aethrom.git && cd aethrom
+claude
+```
+Then tell Claude Code: "Follow SETUP.md to set this up for me."
+
+This is the version worth taking: the interview means `CLAUDE.md`, the companion's name, and every
+placeholder in the vault come out written for you specifically, not filled in with defaults you
+will edit later by hand.
+
+In a hurry, or scripting a second machine, `scripts/install.*` runs the same wiring without the
+interview and without opening Claude Code:
+
+```bash
 ./scripts/install.sh                 # Linux and macOS
 ```
 ```powershell
@@ -37,8 +50,8 @@ regenerates it from the template.
 
 | Path | Needs | Use when |
 |---|---|---|
-| `scripts/install.*` | this clone | You want it working in a minute, no questions about prose |
 | `SETUP.md` | this clone | You want Claude to interview you and personalise every file |
+| `scripts/install.*` | this clone | You want it working in a minute, no questions about prose |
 | `BRAIN.md` | nothing at all | You cannot reach this repo |
 
 All three ask, as their first question, which language your companion should speak. Everything in
