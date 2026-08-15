@@ -9,11 +9,11 @@ to the next. You do not manage files, you talk to it.
 
 ## Quick start
 
-Clone it, open it in Claude Code, and hand it `SETUP.md`. It interviews you: which language your
-companion should speak, who you are, where the vault should live, scaffolds it from `template/`,
-personalises every file it writes instead of leaving a placeholder in it, wires the hooks for your
-platform, proves the hook
-actually runs, and offers the desktop launcher and an hourly backup.
+Clone it, open it in Claude Code, and hand it `SETUP.md`. It interviews you first: which language
+your companion should speak, who you are, what to call it, where the vault should live. Then it
+scaffolds the vault from `template/`, writes your answers into every file instead of leaving a
+placeholder, wires the hooks for your platform, and proves the hook actually runs. The desktop
+launcher and the hourly backup are offered at the end.
 
 ```bash
 git clone https://github.com/aethrox/aethrom.git && cd aethrom
@@ -21,10 +21,9 @@ claude
 ```
 Then tell Claude Code: "Follow SETUP.md to set this up for me."
 
-This is the version worth taking: the interview means `CLAUDE.md`, the companion's name, and every
-placeholder in the vault come out written for you specifically, not filled in with defaults you
-will edit later by hand. It also detects Windows, Linux and macOS itself and branches accordingly,
-so there is no separate script to maintain per platform.
+The interview is the point: `CLAUDE.md`, the companion's name and every placeholder come out
+written for you, not filled with defaults you edit later. SETUP.md detects the platform itself, so
+there is no per-platform installer to maintain.
 
 If the target vault path already exists, Claude shows it to you and asks before touching anything.
 `settings.local.json` holds the API key and is gitignored, so it is written from the template on
@@ -48,11 +47,12 @@ to send to someone who does not have access here.
 ## How it works
 
 The continuity engine is three hooks and four memory files. `session-start.sh` reads
-`Last-Session.md` and `Threads.md` from the companion's memory folder (named after the companion
-you pick during setup, so `🔮 850-Aether/` if you call it Aether) and injects them as context, so the model
-opens every session already knowing where the last one stopped. `prompt-counter.sh` nudges once at
-fifteen prompts to write memory before the session ends. `session-end.sh` notices when a real
-session ended without a memory write and leaves a marker the next `session-start.sh` surfaces.
+`Last-Session.md` and `Threads.md` and injects them as context, so the model opens every session
+knowing where the last one stopped. `prompt-counter.sh` nudges once at fifteen prompts to write
+memory before the session ends. `session-end.sh` notices when a session ended without a memory
+write and leaves a marker the next `session-start.sh` surfaces.
+
+Those four files live in a folder named after your companion: `🔮 850-Aether/` for Aether.
 
 The vault files are the source of truth. mem0, if you enable it, is a searchable index on top and
 never more than that.
@@ -78,8 +78,8 @@ template/            the vault scaffold, copied to its real home during setup
   .claude/run-hidden.vbs       Windows only: runs the hourly backup with no console window
   .claude/semantic-memory.py   optional mem0 recall bridge
 hermes/skills/       the same memory protocol, as a hermes skill
-scripts/schedule-backup.*    registers the hourly backup, one per platform, called from SETUP.md
-scripts/             desktop launchers (called from SETUP.md) and the hermes installer (opt-in, run by hand)
+scripts/             desktop launchers and the backup scheduler, one per platform, both called
+                     from SETUP.md, plus the hermes installer (opt-in, run by hand)
 SETUP.md             the runbook Claude follows, needs this clone
 BRAIN.md             the same build as one self-contained file, needs nothing
 ```
@@ -94,23 +94,21 @@ BRAIN.md             the same build as one self-contained file, needs nothing
 | Desktop launcher | ✅ verified (.lnk + 🧠 icon) | ⚠️ partially verified (.desktop) | ⚠️ untested (upstream applet) |
 | mem0 recall | ✅ verified | ⚠️ untested | ⚠️ untested |
 
-Verified means it was actually executed on that platform. The hooks were run through a five-case
-suite (context injection, reflection marker written, marker injected and cleared, no marker when
-memory was written, the 15-prompt nudge) on Git Bash 5.3 under Windows 11 and on Fedora 44 under
-WSL, and the emitted payload was parsed as JSON.
+Verified means it was actually executed on that platform, not reasoned about. What that covered:
 
-`backup.sh` was exercised against a throwaway remote on Git Bash under Windows and again on Fedora
-44 under WSL: the clean run, a normal commit and push, a push rejected because the clone was
-behind, a real add/add rebase conflict leaving no half-rebase state, the failure marker holding one
-"since" timestamp across repeated failures, the marker clearing on the next success, and the em
-dash refusal. On Fedora the backup-warning branch was also fired through the real systemd unit
-(`systemctl --user start`), both the failing and the succeeding run, with the reason readable in
-`journalctl --user`. The Windows and Linux schedulers were both registered and unregistered for
-real; on Linux that means a live `systemd --user` timer, checked with `systemctl --user
-list-timers`, triggered once by hand, and torn down with `disable --now` plus its unit files
-removed. The Linux desktop launcher was run for real (script logic, the `.desktop` file's syntax,
-the icon copy) but only against a fake `$HOME` in a headless WSL session, so opening it in an
-actual desktop environment and Obsidian is still unverified.
+- **Hooks.** A five-case suite: context injection, reflection marker written, marker injected and
+  cleared, no marker when memory was written, and the 15-prompt nudge. Run on Git Bash 5.3 under
+  Windows 11 and on Fedora 44 under WSL, with the emitted payload parsed as JSON every time.
+- **`backup.sh`.** Run against a throwaway remote on both platforms: the clean run, a normal commit
+  and push, a push rejected because the clone was behind, a real add/add rebase conflict that left
+  no half-rebase state, the failure marker holding one "since" timestamp across repeated failures,
+  the marker clearing on the next success, and the em dash refusal.
+- **Schedulers.** Both registered and unregistered for real. On Linux that meant a live
+  `systemd --user` timer, checked with `systemctl --user list-timers`, triggered once by hand, then
+  torn down with `disable --now` and its unit files removed. The failing and the succeeding backup
+  were both fired through the unit itself, with the reason readable in `journalctl --user`.
+- **The Linux launcher.** Script logic, `.desktop` syntax and the icon copy were all exercised, but
+  only against a fake `$HOME` in a headless WSL session, so it has never reached Obsidian.
 
 ### Portability decisions
 
@@ -120,7 +118,6 @@ actual desktop environment and Obsidian is still unverified.
 - **No `python3` dependency** in the hooks. It is not guaranteed on Windows.
 - **Windows path conversion.** Claude Code substitutes `$CLAUDE_PROJECT_DIR` as `C:\Users\...`,
   which `dirname` cannot split. `to_posix()` in `_common.sh` converts it to `/c/Users/...`.
-
 - **Windows: the hourly backup goes through `wscript.exe`.** Git Bash is a console program, so
   Task Scheduler pops a black window on the desktop every hour while you are logged in.
   `.claude/run-hidden.vbs` runs it with no window, waits, and returns the exit code, so
@@ -161,17 +158,11 @@ refuses to commit a file containing one.
 
 ## Limitations
 
-- **macOS is untested.** The BSD `stat` fallback and the `osacompile` and Swift launcher are
-  carried over from upstream and reasoned about, not executed. Treat that column as best-effort.
-- **The Linux launcher is only partially verified.** It was run for real and produces a
-  spec-correct `.desktop` file and a copied icon, but never against an actual desktop session; the
-  WSL image used for testing is headless, so opening the launcher and having it reach Obsidian is
-  still unverified.
-- **The macOS backup scheduler is untested.** `schedule-backup.sh`'s launchd branch was reasoned
-  about, not executed; there is no macOS machine available. The Linux branch (systemd user timer)
-  was registered, triggered, and torn down for real on Fedora 44 under WSL. A systemd user timer
-  also stops when you log out unless you enable linger, which the script prints but deliberately
-  does not do for you.
+- **macOS is untested.** The BSD `stat` fallback, the `osacompile` applet with its Swift icon, and
+  the launchd branch of `schedule-backup.sh` are all carried over from upstream and reasoned about,
+  never executed; there is no macOS machine here. Treat that column as best-effort.
+- **A systemd user timer stops when you log out** unless you enable linger, which
+  `schedule-backup.sh` prints as an option but deliberately does not do for you.
 - **Setting up a second machine against a vault you already have is not covered.** `SETUP.md`
   builds a new vault from `template/`; it does not clone an existing one. By hand that means
   cloning the vault, making the hooks executable, and writing `settings.local.json` from the
