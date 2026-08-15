@@ -9,17 +9,18 @@ to the next. You do not manage files, you talk to it.
 
 ## Quick start
 
-Clone it, open it in Claude Code, and hand it `SETUP.md`. It interviews you first: which language
-your companion should speak, who you are, what to call it, where the vault should live. Then it
-scaffolds the vault from `template/`, writes your answers into every file instead of leaving a
-placeholder, wires the hooks for your platform, and proves the hook actually runs. The desktop
-launcher and the hourly backup are offered at the end.
+Open Claude Code in any folder and paste this. You do not run anything yourself, the agent clones
+the repo and builds the vault from there.
 
-```bash
-git clone https://github.com/aethrox/aethrom.git && cd aethrom
-claude
+```text
+Clone https://github.com/aethrox/aethrom.git, work from inside that clone, and follow its
+SETUP.md to set up my second brain.
 ```
-Then tell Claude Code: "Follow SETUP.md to set this up for me."
+
+It interviews you first: which language your companion should speak, who you are, what to call it,
+where the vault should live. Then it scaffolds the vault from `template/`, writes your answers into
+every file instead of leaving a placeholder, wires the hooks for your platform, and proves the hook
+actually runs. The desktop launcher and the hourly backup are offered at the end.
 
 The interview is the point: `CLAUDE.md`, the companion's name and every placeholder come out
 written for you, not filled with defaults you edit later. SETUP.md detects the platform itself, so
@@ -33,8 +34,8 @@ every run rather than ever travelling with a vault.
 
 | Path | Needs | Use when |
 |---|---|---|
-| `SETUP.md` | this clone | The normal case: you have the repo and want it personalised |
-| `BRAIN.md` | nothing at all | You cannot reach this repo |
+| `SETUP.md` | access to this repo | The normal case |
+| `BRAIN.md` | nothing at all | The agent cannot reach this repo |
 
 Both ask, as their first question, which language your companion should speak. Everything in this
 repo is English; that answer is what decides how the thing you build talks back to you.

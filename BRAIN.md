@@ -35,7 +35,7 @@ The whole scaffold lives in the aethrom repo. If you can reach it, this is faste
 error-prone than building by hand:
 
 ```bash
-git clone <aethrom-repo-url> && cd aethrom
+git clone https://github.com/aethrox/aethrom.git && cd aethrom
 ```
 
 Then follow `SETUP.md` in that clone: it interviews the user and personalises every file, instead
