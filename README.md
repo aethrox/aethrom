@@ -93,9 +93,9 @@ BRAIN.md             the same build as one self-contained file, needs nothing
 | | Windows | Linux | macOS |
 |---|---|---|---|
 | Continuity hooks | ✅ verified | ✅ verified | ⚠️ untested |
-| `backup.sh` | ✅ verified | ⚠️ untested | ⚠️ untested |
-| Backup scheduler | ✅ verified (scheduled task) | ⚠️ untested (systemd user timer) | ⚠️ untested (launchd agent) |
-| Desktop launcher | ✅ verified (.lnk + 🧠 icon) | ⚠️ untested (.desktop) | ⚠️ untested (upstream applet) |
+| `backup.sh` | ✅ verified | ✅ verified | ⚠️ untested |
+| Backup scheduler | ✅ verified (scheduled task) | ✅ verified (systemd user timer) | ⚠️ untested (launchd agent) |
+| Desktop launcher | ✅ verified (.lnk + 🧠 icon) | ⚠️ partially verified (.desktop) | ⚠️ untested (upstream applet) |
 | mem0 recall | ✅ verified | ⚠️ untested | ⚠️ untested |
 
 Verified means it was actually executed on that platform. The hooks were run through a five-case
@@ -103,12 +103,18 @@ suite (context injection, reflection marker written, marker injected and cleared
 memory was written, the 15-prompt nudge) on Git Bash 5.3 under Windows 11 and on Fedora 44 under
 WSL, and the emitted payload was parsed as JSON.
 
-`backup.sh` was exercised against a throwaway remote on Git Bash under Windows: the clean run, a
-push rejected because the clone was behind, a rebase conflict leaving no half-rebase, the failure
-marker holding one "since" timestamp across repeated failures, and the marker clearing on the next
-success. The Windows scheduler was registered and unregistered for real. The hooks' new
-backup-warning branch has only been run on Windows so far, so treat that one branch as unverified
-on Fedora even though the rest of the row is not.
+`backup.sh` was exercised against a throwaway remote on Git Bash under Windows and again on Fedora
+44 under WSL: the clean run, a normal commit and push, a push rejected because the clone was
+behind, a real add/add rebase conflict leaving no half-rebase state, the failure marker holding one
+"since" timestamp across repeated failures, the marker clearing on the next success, and the em
+dash refusal. On Fedora the backup-warning branch was also fired through the real systemd unit
+(`systemctl --user start`), both the failing and the succeeding run, with the reason readable in
+`journalctl --user`. The Windows and Linux schedulers were both registered and unregistered for
+real; on Linux that means a live `systemd --user` timer, checked with `systemctl --user
+list-timers`, triggered once by hand, and torn down with `disable --now` plus its unit files
+removed. The Linux desktop launcher was run for real (script logic, the `.desktop` file's syntax,
+the icon copy) but only against a fake `$HOME` in a headless WSL session, so opening it in an
+actual desktop environment and Obsidian is still unverified.
 
 ### Portability decisions
 
@@ -161,12 +167,15 @@ refuses to commit a file containing one.
 
 - **macOS is untested.** The BSD `stat` fallback and the `osacompile` and Swift launcher are
   carried over from upstream and reasoned about, not executed. Treat that column as best-effort.
-- **The Linux launcher is untested.** It was written against the freedesktop spec but never run on
-  a desktop session; the WSL image used for hook testing is headless.
-- **The Linux and macOS backup schedulers are untested.** `schedule-backup.sh` writes a systemd
-  user timer and a launchd agent that were reasoned about, not executed. Only the Windows path was
-  registered for real. A systemd user timer also stops when you log out unless you enable linger,
-  which the script prints but deliberately does not do for you.
+- **The Linux launcher is only partially verified.** It was run for real and produces a
+  spec-correct `.desktop` file and a copied icon, but never against an actual desktop session; the
+  WSL image used for testing is headless, so opening the launcher and having it reach Obsidian is
+  still unverified.
+- **The macOS backup scheduler is untested.** `schedule-backup.sh`'s launchd branch was reasoned
+  about, not executed; there is no macOS machine available. The Linux branch (systemd user timer)
+  was registered, triggered, and torn down for real on Fedora 44 under WSL. A systemd user timer
+  also stops when you log out unless you enable linger, which the script prints but deliberately
+  does not do for you.
 - The `obsidian://` handler only resolves after the vault has been opened in Obsidian once, so the
   desktop launcher does nothing until then.
 - mem0 relevance scores are weak until enough memories accumulate. It is a recall index, not the
