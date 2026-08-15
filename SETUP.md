@@ -51,7 +51,7 @@ Verify it before continuing: `& $bash -c "echo ok"` must print `ok`.
 
 ---
 
-## PHASE 1 - Interview (Turkish, conversational - not a form)
+## PHASE 1 - Interview (conversational - not a form)
 
 1. **Which language should your companion speak to you in?** → `{{LANGUAGE}}`. Ask this first,
    in the language the locale suggests, and switch to their answer for everything after it. Free

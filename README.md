@@ -10,9 +10,9 @@ to the next. You do not manage files, you talk to it.
 ## Quick start
 
 Clone it, open it in Claude Code, and hand it `SETUP.md`. It interviews you: which language your
-companion should speak, who you are, where the vault should live, pulls your existing vault repo
-if you have one or scaffolds a fresh one from `template/` if you do not, personalises every file it
-writes instead of leaving a placeholder in it, wires the hooks for your platform, proves the hook
+companion should speak, who you are, where the vault should live, scaffolds it from `template/`,
+personalises every file it writes instead of leaving a placeholder in it, wires the hooks for your
+platform, proves the hook
 actually runs, and offers the desktop launcher and an hourly backup.
 
 ```bash
@@ -27,8 +27,8 @@ will edit later by hand. It also detects Windows, Linux and macOS itself and bra
 so there is no separate script to maintain per platform.
 
 If the target vault path already exists, Claude shows it to you and asks before touching anything.
-A vault pulled from git will not carry `settings.local.json`, since that file holds the API key and
-is gitignored, so the run regenerates it from the template.
+`settings.local.json` holds the API key and is gitignored, so it is written from the template on
+every run rather than ever travelling with a vault.
 
 ## Two ways in
 
@@ -172,6 +172,10 @@ refuses to commit a file containing one.
   was registered, triggered, and torn down for real on Fedora 44 under WSL. A systemd user timer
   also stops when you log out unless you enable linger, which the script prints but deliberately
   does not do for you.
+- **Setting up a second machine against a vault you already have is not covered.** `SETUP.md`
+  builds a new vault from `template/`; it does not clone an existing one. By hand that means
+  cloning the vault, making the hooks executable, and writing `settings.local.json` from the
+  template.
 - The `obsidian://` handler only resolves after the vault has been opened in Obsidian once, so the
   desktop launcher does nothing until then.
 - mem0 relevance scores are weak until enough memories accumulate. It is a recall index, not the
