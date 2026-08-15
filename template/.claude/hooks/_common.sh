@@ -6,7 +6,8 @@
 #    (C:\Users\...), which dirname cannot split. Convert it to the /c/Users/... form
 #    Git Bash understands before touching it.
 #  - stat takes -c on GNU (Linux, Git Bash) and -f on BSD (macOS).
-#  - python3 is not guaranteed on Windows, so JSON escaping is done with sed/awk.
+#  - python3 is not guaranteed on Windows and awk is missing from minimal images,
+#    so JSON escaping is pure bash. See json_string() below.
 
 # C:\Users\x  ->  /c/Users/x   (anything already POSIX passes through untouched)
 to_posix() {

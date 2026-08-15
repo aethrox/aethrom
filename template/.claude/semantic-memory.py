@@ -13,7 +13,7 @@ Usage:
 
 `uv tool install mem0ai` does NOT work - mem0ai is a library and ships no executables.
 Do not rename this file to mem0.py: its own directory is on sys.path and would shadow
-the mem0 package. The files in 850-Companion/ remain the source of truth; this is only
+the mem0 package. The files in 850-{{COMPANION}}/ remain the source of truth; this is only
 a recall index, so a failure here must never block a reply.
 """
 import json

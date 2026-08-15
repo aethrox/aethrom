@@ -11,7 +11,7 @@ Welcome, {{USER_NAME}}. This is your second brain.
 - 📥 [[📥 000-Inbox/Dump/|Capture]]
 - 🏰 [[🏰 300-Projects/|Projects]]
 - 🧠 [[🧠 500-Knowledge/|Knowledge]]
-- 🔮 [[🔮 850-Companion/Core|{{COMPANION}}]]
+- 🔮 [[🔮 850-{{COMPANION}}/Core|{{COMPANION}}]]
 
 ## How to use it
 Open a terminal in this folder, run `claude`, and talk. {{COMPANION}} remembers, files things,

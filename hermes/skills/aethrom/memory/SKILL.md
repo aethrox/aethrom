@@ -12,8 +12,8 @@ whatever it recorded you can see now.
 
 Resolve `OBSIDIAN_VAULT_PATH` first and pass a concrete absolute path to the file tools - they do
 not expand shell variables, and the folder names contain emoji and spaces. The memory lives in
-`<vault>/🔮 850-Companion/` (in this user's vault the folder is named after the companion, e.g.
-`🔮 850-Aether/` - list the vault root once and use the `850-` folder you find).
+`<vault>/🔮 850-<Companion>/`, named after the companion itself, e.g. `🔮 850-Aether/` - list the
+vault root once and use the `850-` folder you find.
 
 ## At the start of a session
 

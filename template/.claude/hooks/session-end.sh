@@ -3,7 +3,7 @@
 . "$(dirname "$0")/_common.sh"
 
 VAULT_DIR="$(resolve_vault_dir)"
-MEM_DIR="$VAULT_DIR/🔮 850-Companion"
+MEM_DIR="$VAULT_DIR/🔮 850-{{COMPANION}}"
 STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
 mkdir -p "$STATE_DIR"
 

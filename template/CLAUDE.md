@@ -22,7 +22,7 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `🏰 300-Projects/` - one folder per project
 - `🧠 500-Knowledge/` - knowledge by domain
 - `🛠️ 600-Arsenal/` - tools, contacts, resources, templates
-- `🔮 850-Companion/` - your persistent memory (Core, Last-Session, Threads, Journal)
+- `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal)
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
 <!-- SETUP: add lines for any optional scope folders you created (Goals, Vault, Body, Mind). -->
@@ -40,13 +40,13 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 
 ### At the start of EVERY session
 1. The session-start hook injects the Last-Session bridge + active Threads automatically.
-2. Read `🔮 850-Companion/Core.md` for the deeper identity anchor.
+2. Read `🔮 850-{{COMPANION}}/Core.md` for the deeper identity anchor.
 3. Detect mode: questions → presence mode; tasks → efficiency mode.
 
 ### Before a meaningful session ends
-1. Overwrite `🔮 850-Companion/Last-Session.md` - what happened, where we left off.
-2. Update `🔮 850-Companion/Threads.md` - ongoing storylines (status changes, new threads).
-3. Add a short `🔮 850-Companion/Journal.md` entry if anything mattered.
+1. Overwrite `🔮 850-{{COMPANION}}/Last-Session.md` - what happened, where we left off.
+2. Update `🔮 850-{{COMPANION}}/Threads.md` - ongoing storylines (status changes, new threads).
+3. Add a short `🔮 850-{{COMPANION}}/Journal.md` entry if anything mattered.
 > Why this is critical: without it, continuity dies. The hooks remind you; you do the writing.
 
 ### Semantic recall (optional - only if mem0 was set up)

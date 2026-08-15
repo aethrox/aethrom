@@ -48,7 +48,8 @@ to send to someone who does not have access here.
 ## How it works
 
 The continuity engine is three hooks and four memory files. `session-start.sh` reads
-`🔮 850-Companion/Last-Session.md` and `Threads.md` and injects them as context, so the model
+`Last-Session.md` and `Threads.md` from the companion's memory folder (named after the companion
+you pick during setup, so `🔮 850-Aether/` if you call it Aether) and injects them as context, so the model
 opens every session already knowing where the last one stopped. `prompt-counter.sh` nudges once at
 fifteen prompts to write memory before the session ends. `session-end.sh` notices when a real
 session ended without a memory write and leaves a marker the next `session-start.sh` surfaces.
@@ -174,11 +175,12 @@ refuses to commit a file containing one.
 - The `obsidian://` handler only resolves after the vault has been opened in Obsidian once, so the
   desktop launcher does nothing until then.
 - mem0 relevance scores are weak until enough memories accumulate. It is a recall index, not the
-  source of truth. The files in `🔮 850-Companion/` are.
+  source of truth. The files in the companion's memory folder are.
 - `uv tool install mem0ai` fails: it is a library with no executables. Use a venv.
-- `SETUP.md` and `BRAIN.md` describe the same build and can drift apart. `BRAIN.md`'s embedded
-  hooks are byte-identical to `template/.claude/hooks/` today; there is no check that keeps them
-  that way.
+- `SETUP.md` and `BRAIN.md` describe the same build and can drift apart. The three hooks embedded
+  in `BRAIN.md` are byte-identical to `template/.claude/hooks/` today; `_common.sh`, `backup.sh`,
+  `run-hidden.vbs` and `semantic-memory.py` are the same code with their header comments trimmed.
+  Nothing checks any of this, so a change to one side has to be made on the other by hand.
 
 ## Credits
 

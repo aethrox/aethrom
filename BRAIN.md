@@ -127,7 +127,7 @@ Claude Code is already installed, the user is running you. Do not reinstall it.
 ├── 🏰 300-Projects/           # one folder per project
 ├── 🧠 500-Knowledge/          # knowledge by domain
 ├── 🛠️ 600-Arsenal/            # tools, contacts, resources
-├── 🔮 850-Companion/          # the companion's persistent memory
+├── 🔮 850-{{COMPANION}}/      # the companion's persistent memory
 ├── 📦 900-Archive/            # done and parked
 ├── 📋 Templates/
 └── .claude/
@@ -138,8 +138,10 @@ Claude Code is already installed, the user is running you. Do not reinstall it.
 Add only the optional folders the user picked in PHASE 1: `⚔️ 200-Goals`, `🔐 400-Vault`,
 `💪 700-Body`, `🧘 800-Mind`.
 
-**Keep the memory folder named `🔮 850-Companion`.** The hooks reference that exact path. The
-companion's name lives in the file contents, not the folder name.
+**Name the memory folder `🔮 850-{{COMPANION}}`**, using the companion name from PHASE 1. Keep the
+emoji and the `850-` prefix exactly; only the name after the dash changes. The hooks and
+`semantic-memory.py` below reference `🔮 850-{{COMPANION}}` and expect it to exist under that
+exact name.
 
 Write `{{VAULT_PATH}}/.gitignore`:
 
@@ -238,7 +240,7 @@ emit_context() {
 . "$(dirname "$0")/_common.sh"
 
 VAULT_DIR="$(resolve_vault_dir)"
-MEM_DIR="$VAULT_DIR/🔮 850-Companion"
+MEM_DIR="$VAULT_DIR/🔮 850-{{COMPANION}}"
 STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
 mkdir -p "$STATE_DIR"
 date +%s > "$STATE_DIR/session_start_time"
@@ -252,7 +254,7 @@ THREADS=""
 
 REFLECTION=""
 if [ -f "$STATE_DIR/needs_reflection" ]; then
-  REFLECTION="⚠️ The previous session ended without a memory write: $(cat "$STATE_DIR/needs_reflection"). If anything mattered, update the 🔮 850-Companion files."
+  REFLECTION="⚠️ The previous session ended without a memory write: $(cat "$STATE_DIR/needs_reflection"). If anything mattered, update the 🔮 850-{{COMPANION}} files."
   rm -f "$STATE_DIR/needs_reflection"
 fi
 
@@ -320,7 +322,7 @@ exit 0
 . "$(dirname "$0")/_common.sh"
 
 VAULT_DIR="$(resolve_vault_dir)"
-MEM_DIR="$VAULT_DIR/🔮 850-Companion"
+MEM_DIR="$VAULT_DIR/🔮 850-{{COMPANION}}"
 STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
 mkdir -p "$STATE_DIR"
 
@@ -416,7 +418,7 @@ companion. Write it with every placeholder resolved:
 You are {{COMPANION}}, {{USER_NAME}}'s AI partner and second brain. Not a generic assistant -
 a crew member who remembers, builds continuity, and treats this vault as shared memory.
 
-- Talk to {{USER_NAME}} in **Turkish** by default (match whatever language they write in).
+- Talk to {{USER_NAME}} in **{{LANGUAGE}}** by default (match whatever language they write in).
 - Direct, high-signal, warm but not soft. No corporate filler, no lecturing.
 - You remember across sessions via the memory system below. Continuity is your job.
 
@@ -430,7 +432,7 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `🏰 300-Projects/` - one folder per project
 - `🧠 500-Knowledge/` - knowledge by domain
 - `🛠️ 600-Arsenal/` - tools, contacts, resources, templates
-- `🔮 850-Companion/` - your persistent memory (Core, Last-Session, Threads, Journal)
+- `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal)
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
 
@@ -447,13 +449,13 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 
 ### At the start of EVERY session
 1. The session-start hook injects the Last-Session bridge + active Threads automatically.
-2. Read `🔮 850-Companion/Core.md` for the deeper identity anchor.
+2. Read `🔮 850-{{COMPANION}}/Core.md` for the deeper identity anchor.
 3. Detect mode: questions -> presence mode; tasks -> efficiency mode.
 
 ### Before a meaningful session ends
-1. Overwrite `🔮 850-Companion/Last-Session.md` - what happened, where we left off.
-2. Update `🔮 850-Companion/Threads.md` - ongoing storylines (status changes, new threads).
-3. Add a short `🔮 850-Companion/Journal.md` entry if anything mattered.
+1. Overwrite `🔮 850-{{COMPANION}}/Last-Session.md` - what happened, where we left off.
+2. Update `🔮 850-{{COMPANION}}/Threads.md` - ongoing storylines (status changes, new threads).
+3. Add a short `🔮 850-{{COMPANION}}/Journal.md` entry if anything mattered.
 > Why this is critical: without it, continuity dies. The hooks remind you; you do the writing.
 
 ### Semantic recall (optional - only if mem0 was set up)
@@ -470,6 +472,11 @@ The files above are the source of truth. On top of them sits a searchable index,
 - It calls a remote API, so it can be slow or offline. If it fails, carry on with the vault
   files; never block a reply on it.
 
+## Backups
+The vault is a git repo. `.claude/backup.sh` commits and pushes anything that changed; the
+scheduled task set up during install runs it hourly. Do not commit on {{USER_NAME}}'s behalf
+unless asked, the backup handles it.
+
 ## How {{COMPANION}} shows up
 - Work mode: sharp, fast, precise. Challenges weak thinking.
 - Reflection mode: sits with the question, doesn't rush to an answer.
@@ -484,7 +491,7 @@ pointer to a script that is not there.
 
 ## PHASE 7 - Seed the companion memory
 
-Four files in `🔮 850-Companion/`, so the continuity engine has something to read on session 1.
+Four files in `🔮 850-{{COMPANION}}/`, so the continuity engine has something to read on session 1.
 
 **`Core.md`**
 ```markdown
@@ -558,7 +565,7 @@ Welcome, {{USER_NAME}}. This is your second brain.
 - 📥 [[📥 000-Inbox/Dump/|Capture]]
 - 🏰 [[🏰 300-Projects/|Projects]]
 - 🧠 [[🧠 500-Knowledge/|Knowledge]]
-- 🔮 [[🔮 850-Companion/Core|{{COMPANION}}]]
+- 🔮 [[🔮 850-{{COMPANION}}/Core|{{COMPANION}}]]
 
 ## How to use it
 Open a terminal in this folder, run `claude`, and talk. {{COMPANION}} remembers, files things,
@@ -667,7 +674,7 @@ Write `{{VAULT_PATH}}/.claude/semantic-memory.py`:
 
 `uv tool install mem0ai` does NOT work - mem0ai is a library and ships no executables.
 Do not rename this file to mem0.py: its own directory is on sys.path and would shadow
-the mem0 package. The files in 850-Companion/ remain the source of truth; this is only
+the mem0 package. The files in 850-{{COMPANION}}/ remain the source of truth; this is only
 a recall index, so a failure here must never block a reply.
 """
 import json
@@ -880,7 +887,7 @@ is `Get-ScheduledTaskInfo -TaskName "{{OS_NAME}} Vault Backup"`, on Linux
 ls -la "{{VAULT_PATH}}"
 ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # 4 *.sh including _common.sh
 test -f "{{VAULT_PATH}}/CLAUDE.md" && echo "CLAUDE.md ok"
-test -f "{{VAULT_PATH}}/🔮 850-Companion/Last-Session.md" && echo "memory ok"
+test -f "{{VAULT_PATH}}/🔮 850-{{COMPANION}}/Last-Session.md" && echo "memory ok"
 bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"          # one line of JSON
 grep -rl '{{' "{{VAULT_PATH}}" || echo "all placeholders resolved"
 ```

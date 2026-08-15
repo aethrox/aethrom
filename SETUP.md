@@ -116,16 +116,18 @@ If it prints nothing, the hook is broken and continuity is silently dead - debug
 
 ## PHASE 5 - Personalize
 
-Replace every placeholder in every file under the vault. Files that contain them: `CLAUDE.md`,
-`🎯 100-Command-Center/Dashboard.md`, all of `🔮 850-Companion/*.md`, the three hooks,
-`.claude/backup.sh`, and `.claude/semantic-memory.py`. Then verify:
+First rename the folder from `🔮 850-Companion` to `🔮 850-{{COMPANION}}` (same value used
+everywhere else) - the hooks and `semantic-memory.py` reference `🔮 850-{{COMPANION}}` and
+expect it post-personalization. Keep the emoji and the `850-` prefix exactly; only the name
+after the dash changes.
+
+Then replace every placeholder in every file under the vault. Files that contain them:
+`CLAUDE.md`, `🎯 100-Command-Center/Dashboard.md`, all of `🔮 850-{{COMPANION}}/*.md`, the
+three hooks, `.claude/backup.sh`, and `.claude/semantic-memory.py`. Then verify:
 
 ```bash
 grep -rl "{{" "{{VAULT_PATH}}" || echo "all placeholders resolved"
 ```
-
-Keep the folder named `🔮 850-Companion` - the hooks reference that exact path. The companion's
-name lives in the file *contents*, not the folder name.
 
 Also add a line to the vault structure section of `CLAUDE.md` for each optional folder created.
 
@@ -205,7 +207,7 @@ gitignored and must stay uncommitted. Verify with:
 ls -la "{{VAULT_PATH}}"
 ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # 4 *.sh incl. _common.sh
 test -f "{{VAULT_PATH}}/CLAUDE.md" && echo "CLAUDE.md ok"
-test -f "{{VAULT_PATH}}/🔮 850-Companion/Last-Session.md" && echo "memory ok"
+test -f "{{VAULT_PATH}}/🔮 850-{{COMPANION}}/Last-Session.md" && echo "memory ok"
 ```
 
 Report to the user in `{{LANGUAGE}}`:
