@@ -77,7 +77,7 @@ up, and quiet again as soon as one succeeds.
 ```
 template/            the vault scaffold, copied to its real home during setup
   AGENTS.md          the companion's whole context: identity, structure, memory protocol
-  CLAUDE.md          three lines pointing Claude Code at AGENTS.md
+  CLAUDE.md          imports AGENTS.md, so Claude Code loads it automatically
   .claude/hooks/     the continuity engine (session-start, prompt-counter, session-end,
                      plus _common.sh, the portability shims they all source)
   .claude/backup.sh  commit and push the vault, scheduled hourly during setup
@@ -137,8 +137,14 @@ Verified means it was actually executed on that platform, not reasoned about. Wh
 ## Which agent drives it
 
 The vault ships two context files. `AGENTS.md` is the whole thing: identity, vault structure,
-conventions, the memory protocol. `CLAUDE.md` is three lines pointing at it, because Claude Code
-loads that name automatically. One source, no copy to keep in sync.
+conventions, the memory protocol. `CLAUDE.md` is a short wrapper that imports it with an
+`@AGENTS.md` line, since Claude Code loads that filename automatically and follows the import.
+One source, no copy to keep in sync.
+
+The import matters more than it looks. Tested here with a real `claude -p` run in a filled vault:
+with `CLAUDE.md` merely telling the model to go read `AGENTS.md`, it answered without having read
+it and could not say who it was. With the `@AGENTS.md` import, the same question came back in the
+companion's voice on the first try.
 
 Any agent that reads `AGENTS.md` picks up the protocol. That was verified here with Codex, which
 applied an `AGENTS.md` rule without being told the file existed. Cursor, Gemini CLI and Copilot
