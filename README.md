@@ -1,11 +1,13 @@
 # aethrom
 
-An Obsidian vault that **remembers across sessions**, driven by whichever coding agent you already
-use, with a scaffold and a build runbook that work on **Windows, Linux and macOS**.
+A second brain for your coding agent: an Obsidian vault that **remembers across sessions**, built
+and driven by whichever agent you already use, with a scaffold and a build runbook that work on
+**Windows, Linux and macOS**.
 
 Most chat assistants forget you every session. This does not. A local Obsidian vault holds
 everything you know and do, an agent drives it, and four memory files carry what matters from one
-session to the next. You do not manage files, you talk to it.
+session to the next. You do not manage files, you talk to it. In Claude Code, hooks make the
+memory read and write automatic instead of relying on the model to remember to remember.
 
 ## Quick start
 
