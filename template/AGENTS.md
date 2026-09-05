@@ -99,6 +99,11 @@ so, so a session is never silently lost. Read it when you need what happened in 
 not part of, but never hand-edit it, it is the raw material a future knowledge-base compile will
 read from.
 
+The vault has a second writer: Hermes has no hook system, so its own memory skill appends a
+session entry to this same file by hand at the end of a session. The `### Session (HH:MM)` plus
+five-heading shape below is a shared contract, not an implementation detail of this engine, and
+the evening compile treats an entry written either way exactly the same.
+
 ## Knowledge base
 `knowledge/` (`index.md`, `log.md`, `concepts/`, `connections/`) is machine-written too, compiled
 from `daily/` by an evening pass on `sonnet`, described at `.claude/hooks/compile.py`. Read it for
