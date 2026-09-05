@@ -349,3 +349,34 @@ Report to the user in `{{LANGUAGE}}`:
   scheduled backup). Do not pass over them silently. If you skipped the hooks, say that the memory
   protocol now depends on the agent following `AGENTS.md` rather than being reminded by the
   harness.
+
+---
+
+## Upgrading an existing vault
+
+The vault is a git repo, and that is the whole rollback story here, there is no snapshot tool and
+no upgrade script because a commit already does that job.
+
+1. **Commit the vault first.** That commit is the rollback if anything below goes wrong.
+2. **Run `python scripts/upgrade-check.py "{{VAULT_PATH}}"`** from a clone of this repo. It is
+   report-only: it writes nothing, moves nothing, deletes nothing, and just prints what differs.
+   Exit code 0 means already current, 1 means there is something to do.
+3. **Replace only the files it names as code**: `.claude/hooks/` and `.claude/skills/` entries
+   reported missing, differing or new, plus the bash-era leftovers it names for removal.
+4. **Leave `daily/`, `knowledge/` and the `🔮 850-*` memory folder alone.** The report never
+   suggests replacing them, they are the user's memory, not code.
+5. **Seed only what it reports missing** (`Rules.md`, `knowledge/index.md`, `knowledge/log.md`,
+   the `knowledge/concepts/` and `knowledge/connections/` folders), never overwriting one that
+   already exists.
+6. **Re-resolve `{{PYTHON_PATH}}` and the guard placeholders.** A vault from the bash era has none
+   of them in its `settings.local.json`; redo PHASE 0's Python discovery and PHASE 4's settings
+   write rather than patching the old file.
+7. **Run the `doctor` skill** and confirm every check is green.
+
+Two traps to call out by name:
+
+- **`settings.local.json` still wired to the deleted bash hooks** (`session-start.sh`,
+  `prompt-counter.sh`, `session-end.sh`) means the engine never runs, and nothing says so.
+  `upgrade-check.py` flags this; treat it as the top-priority line in the report.
+- **`python3` on Windows can be a Microsoft Store stub** that is on PATH but fails when run.
+  Re-resolve `{{PYTHON_PATH}}` by running each candidate, not by checking presence on PATH.

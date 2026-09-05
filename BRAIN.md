@@ -217,10 +217,19 @@ email to use and set them with `git config`. Do not guess them.
 
 ## PHASE 4 - The continuity engine (hooks, Claude Code only)
 
-One Python dispatcher plus two tiny fallback scripts are what make the memory protocol automatic:
-they inject the last session at startup and nudge for a memory write before the session ends.
-Hooks are a Claude Code feature, so skip to PHASE 6 if you are another agent. The protocol in
+One Python dispatcher plus a handful of small support modules are what make the memory protocol
+automatic: they inject the last session at startup and nudge for a memory write before the session
+ends. Hooks are a Claude Code feature, so skip to PHASE 6 if you are another agent. The protocol in
 PHASE 6 holds either way, it is just read rather than enforced.
+
+**This is the one part of the build this file cannot hand you verbatim.** `hooks.py`, `_common.py`,
+`flush.py`, `compile.py`, `graph_check.py` and `portalock.py` together are roughly 2,500 lines of
+Python; pasting them here would triple this file and turn every future engine change into a
+two-place edit. The rest of this build is genuinely reconstructable from memory alone, this part
+is not: **clone the repo** (`git clone https://github.com/aethrox/aethrom.git`) and copy
+`template/.claude/hooks/` from it rather than retyping any of these six files from description.
+What follows for each one is its path, what it does, and how it is invoked, enough to verify the
+copy is wired correctly, not enough to rebuild it from scratch.
 
 ### Why it looks like this
 
@@ -242,10 +251,29 @@ PHASE 6 holds either way, it is just read rather than enforced.
 `_common.py` holds the shared helpers: `vault_root()`, `state_dir()`, `memory_dir()` (found by
 globbing `🔮 850-*`, never hardcoded), `session_key()`, `read_hook_input()`, `emit_context()`,
 `cap_section()`, `mtime()`, and `cleanup_state()`. `hooks.py` is the dispatcher: it reads the hook
-payload from stdin, derives the session key, and runs the matching subcommand. Every subcommand is
+payload from stdin, derives the session key, and runs the matching subcommand
+(`session-start`, `prompt-counter`, `session-end`, `pre-compact`). Every subcommand is
 wrapped so an unexpected exception exits 0 silently rather than crashing the hook. See
 `template/.claude/hooks/_common.py` and `template/.claude/hooks/hooks.py` in the repo for the full
 source; write them by copying those files rather than retyping them here.
+
+### `.claude/hooks/portalock.py`
+
+Cross-platform advisory file locking used by `flush.py` and `compile.py` so two hooks racing to
+touch the same daily log or knowledge file do not corrupt it. Windows has no `fcntl`, so this
+module picks its implementation at import time: `msvcrt.locking` on Windows, `fcntl.flock`
+elsewhere, both exposed through the same `acquire()` / `exclusive()` interface, with a bounded
+retry loop so a wedged peer cannot hang a hook forever. It also supplies `detached_kwargs()`, the
+platform-specific `subprocess` flags `flush.py` and `hooks.py` use to spawn a process that survives
+the parent hook returning. It is imported by `flush.py` and `compile.py`, never invoked directly.
+
+### `.claude/hooks/graph_check.py`
+
+Scans the vault for broken `[[wikilinks]]` (a link target that resolves to no file) and orphan
+Markdown notes (a note nothing links to, outside `Templates/`, `daily/` and `knowledge/`, which
+are exempt by design). Run standalone as `python .claude/hooks/graph_check.py` from the vault
+root, or, more commonly, invoked by the `doctor` skill below as one of its checks. It never writes
+anything; it only reports.
 
 ### `.claude/hooks/guard.sh`
 
@@ -266,6 +294,27 @@ echo {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"
 
 Nothing here needs `chmod +x`. Every hook is invoked in exec form with the script path passed as
 an argument, so no shebang or execute bit is ever relied on, on any platform.
+
+### `.claude/skills/doctor/SKILL.md` and `.claude/skills/import-history/SKILL.md`
+
+Two Claude Code skills ship alongside the hooks, under `.claude/skills/`. Same rule as the hooks
+above: these are the source, describe and copy, do not retype.
+
+- **`doctor`** is the health check for everything above: it verifies the hook files are present,
+  runs `hooks.py session-start` by hand and checks it prints valid JSON, checks the daily log and
+  compile are not stale, and runs `.claude/hooks/graph_check.py` for broken wikilinks and orphan
+  notes, reporting one table with a fix line per failing check. Invoked by asking for "the doctor
+  skill" or "a health check" in a Claude Code session inside the vault.
+- **`import-history`** converts an exported conversation history from another assistant (ChatGPT,
+  Claude, a Gemini Takeout archive) into `daily/import-YYYY-MM-part-NNN.md` files shaped like the
+  engine's own daily log, so the evening compiler can ingest old conversations the same way it
+  ingests new ones. It gates behind an explicit consent step: it must state the data flow (read
+  locally, written to local `daily/` files, then summarized through the user's own Claude
+  subscription, nothing uploaded elsewhere) and get permission before touching any file. Invoked
+  by asking to "import my chat history" or similar inside the vault.
+
+Copy both `SKILL.md` files from `template/.claude/skills/doctor/` and
+`template/.claude/skills/import-history/` in the repo.
 
 ---
 
@@ -1006,3 +1055,42 @@ Then report to the user, in `{{LANGUAGE}}`:
   reminded by the harness.
 
 Done. You just gave someone a second brain that remembers.
+
+---
+
+## PHASE 12 - Upgrading an existing vault
+
+The vault is a git repo (PHASE 3 made it one), and that is the whole rollback story here: there
+is no snapshot tool and no upgrade script, because a commit already does that job. Follow this
+runbook by hand instead.
+
+1. **Commit the vault first.** If anything below goes wrong, `git checkout` undoes it. This step
+   is not optional, it is the only safety net that exists.
+2. **Run `scripts/upgrade-check.py <vault-path>`** from a clone of the repo. It is report-only: it
+   writes nothing, moves nothing, deletes nothing, and prints exactly what differs, exit code 0
+   when the vault is already current, 1 when there is something to do.
+3. **Replace only what it names as code**: files under `.claude/hooks/` and `.claude/skills/` that
+   it reports as missing, differing, or new, plus the bash-era leftovers it names for removal
+   (`.claude/hooks/_common.sh`, `session-start.sh`, `prompt-counter.sh`, `session-end.sh`,
+   `.claude/settings.windows.json`).
+4. **Leave `daily/`, `knowledge/` and the `🔮 850-*` memory folder alone.** The report never lists
+   them for replacement, and neither should you: they are the user's memory, not code.
+5. **Seed only what it reports missing**: `Rules.md` in the memory folder, `knowledge/index.md`,
+   `knowledge/log.md`, and the `knowledge/concepts/` and `knowledge/connections/` folders, using
+   the seed content in PHASE 4 and PHASE 7 above. Never overwrite one of these if it already
+   exists, by then it holds the user's content.
+6. **Re-resolve the placeholders.** A vault upgrading from the bash era has none of
+   `{{PYTHON_PATH}}`, `{{GUARD_COMMAND}}`, `{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}` in its
+   `settings.local.json`, because that file predates them. Redo PHASE 0's Python discovery and
+   PHASE 5's settings write from scratch rather than patching the old file in place.
+7. **Run the `doctor` skill** and confirm every check is green.
+
+Two traps, by name:
+
+- **`settings.local.json` still wired to the deleted bash hooks.** If it references
+  `session-start.sh`, `prompt-counter.sh` or `session-end.sh`, the new engine never runs, and
+  nothing announces this: no error, no warning, just silent continuity loss. `upgrade-check.py`
+  flags this explicitly; treat it as the highest-priority line in the report.
+- **`python3` on Windows can be a Microsoft Store stub.** It is on PATH and looks legitimate, but
+  running it fails. Re-resolving `{{PYTHON_PATH}}` means running each candidate and taking the one
+  that actually prints a version, exactly as PHASE 0 describes, not just checking presence on PATH.

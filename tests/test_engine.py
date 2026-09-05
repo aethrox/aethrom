@@ -1458,5 +1458,129 @@ class TestGraphCheckScan(unittest.TestCase):
             self.assertNotIn("b.md", orphan_names)
 
 
+UPGRADE_CHECK = Path(__file__).resolve().parent.parent / "scripts" / "upgrade-check.py"
+REPO_TEMPLATE = Path(__file__).resolve().parent.parent / "template"
+
+
+def run_upgrade_check(vault: Path):
+    result = subprocess.run(
+        [_sys.executable, str(UPGRADE_CHECK), str(vault)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return result.returncode, result.stdout
+
+
+def snapshot_tree(root: Path):
+    """(relative path, size, mtime_ns, content-hash) for every file under root."""
+    import hashlib
+
+    out = {}
+    for p in sorted(root.rglob("*")):
+        if p.is_file():
+            rel = str(p.relative_to(root))
+            out[rel] = (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
+    return out
+
+
+class TestUpgradeCheck(unittest.TestCase):
+    def make_current_vault(self, dst: Path):
+        import shutil
+
+        shutil.copytree(REPO_TEMPLATE, dst)
+
+    def test_current_vault_reports_nothing_to_do(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            self.make_current_vault(vault)
+            code, out = run_upgrade_check(vault)
+            self.assertEqual(code, 0, out)
+            self.assertIn("already current", out)
+
+    def test_bash_era_leftovers_and_old_settings_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            self.make_current_vault(vault)
+            (vault / ".claude" / "hooks" / "session-start.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            (vault / ".claude" / "settings.windows.json").write_text("{}\n", encoding="utf-8")
+            code, out = run_upgrade_check(vault)
+            self.assertEqual(code, 1, out)
+            self.assertIn("remove: .claude/hooks/session-start.sh", out)
+            self.assertIn("remove: .claude/settings.windows.json", out)
+
+    def test_missing_daily_knowledge_and_rules_reported(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            self.make_current_vault(vault)
+            shutil.rmtree(vault / "daily")
+            shutil.rmtree(vault / "knowledge")
+            (vault / "\U0001F52E 850-Companion" / "Rules.md").unlink()
+            code, out = run_upgrade_check(vault)
+            self.assertEqual(code, 1, out)
+            self.assertIn("missing: daily/", out)
+            self.assertIn("missing: knowledge/", out)
+            self.assertIn("missing: \U0001F52E 850-Companion/Rules.md", out)
+            self.assertIn("missing: knowledge/index.md", out)
+
+    def test_modified_engine_file_reported_as_differing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            self.make_current_vault(vault)
+            hooks_py = vault / ".claude" / "hooks" / "hooks.py"
+            hooks_py.write_text(hooks_py.read_text(encoding="utf-8") + "\n# local edit\n", encoding="utf-8")
+            code, out = run_upgrade_check(vault)
+            self.assertEqual(code, 1, out)
+            self.assertIn("differs: .claude/hooks/hooks.py", out)
+
+    def test_user_memory_content_never_flagged_for_replacement(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            self.make_current_vault(vault)
+            (vault / "daily" / "2026-01-01.md").write_text("# my private day\nstuff happened\n", encoding="utf-8")
+            (vault / "knowledge" / "concepts" / "my-concept.md").write_text("# my concept\n", encoding="utf-8")
+            code, out = run_upgrade_check(vault)
+            self.assertEqual(code, 0, out)
+            self.assertNotIn("2026-01-01.md", out)
+            self.assertNotIn("my-concept.md", out)
+            self.assertIn("hold the user's own content", out)
+            self.assertIn("never lists", out)
+
+    def test_memory_folder_found_via_glob(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            self.make_current_vault(vault)
+            shutil.move(str(vault / "\U0001F52E 850-Companion"), str(vault / "\U0001F52E 850-Aether"))
+            (vault / "\U0001F52E 850-Aether" / "Rules.md").unlink()
+            code, out = run_upgrade_check(vault)
+            self.assertEqual(code, 1, out)
+            self.assertIn("missing: \U0001F52E 850-Aether/Rules.md", out)
+
+    def test_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp) / "vault"
+            self.make_current_vault(vault)
+            # Make it an "old" vault too, so every code path (leftovers, missing
+            # folders, seeds, settings check) actually runs, not just the clean path.
+            (vault / ".claude" / "hooks" / "session-start.sh").write_text("x", encoding="utf-8")
+            (vault / ".claude" / "settings.local.json").write_text(
+                '{"hooks": {"SessionStart": [{"hooks": [{"command": "sh", '
+                '"args": ["session-start.sh"]}]}]}}',
+                encoding="utf-8",
+            )
+            before = snapshot_tree(vault)
+            run_upgrade_check(vault)
+            after = snapshot_tree(vault)
+            self.assertEqual(before, after)
+
+    def test_usage_error_exit_code(self):
+        code, _out = run_upgrade_check(Path("/does/not/exist"))
+        self.assertEqual(code, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
