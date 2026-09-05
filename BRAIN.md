@@ -27,8 +27,9 @@
    colon, or rewrite.
 
 Placeholders: `{{LANGUAGE}}` `{{OS_NAME}}` `{{USER_NAME}}` `{{USER_BIO}}` `{{COMPANION}}`
-`{{VAULT_PATH}}` `{{TODAY}}` `{{USER_ID}}` `{{VENV_PYTHON}}` and, on Windows only,
-`{{BASH_PATH}}` `{{VAULT_PATH_FWD}}`.
+`{{VAULT_PATH}}` `{{TODAY}}` `{{USER_ID}}` `{{VENV_PYTHON}}` `{{PYTHON_PATH}}`
+`{{GUARD_COMMAND}}` `{{GUARD_ARG1}}` `{{GUARD_SCRIPT}}` and, on Windows only, for the scheduled backup task in
+PHASE 10b: `{{BASH_PATH}}` `{{VAULT_PATH_FWD}}`.
 
 ---
 
@@ -59,7 +60,6 @@ Every phase below branches on this. Do not run macOS commands on Windows.
 | detect | `$env:OS -eq 'Windows_NT'` | `uname -s` = Linux | `uname -s` = Darwin |
 | machine name | `$env:COMPUTERNAME` | `hostname` | `scutil --get ComputerName` |
 | vault default | `$env:USERPROFILE\Documents\{{OS_NAME}}` | `~/Documents/{{OS_NAME}}` | see below |
-| shell for hooks | Git Bash | system bash | system bash |
 
 macOS vault default: if `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/` exists, use
 `.../Documents/{{OS_NAME}}` so it syncs across devices. Otherwise `~/Documents/{{OS_NAME}}`.
@@ -71,17 +71,28 @@ names their whole system: the folder, the vault, the dashboard.
 
 Set `{{TODAY}}` from `date +%F`.
 
-### Windows only - find Git Bash
+### Find a working Python
 
-`C:\Windows\System32\bash.exe` is the **WSL** launcher. It cannot see the vault at a Windows path
-and it will not work. Find the real one:
+The hooks are Python, invoked in exec form with no shell and no shebang, so `{{PYTHON_PATH}}` must
+be an absolute path to an interpreter that actually runs, not merely one that is present on PATH.
+On this user's Windows machine `python3` resolves to a Microsoft Store stub: it exists on PATH but
+fails the moment it runs, while `python` works. So run each candidate rather than checking for it:
 
-```powershell
-(Get-Command git).Source -replace '\\cmd\\git\.exe$', '\bin\bash.exe'
+```bash
+python3 -c "import sys; print(sys.version_info[0])"   # try first
+python -c "import sys; print(sys.version_info[0])"    # fall back to this
 ```
 
-Verify before continuing: `& $bash -c "echo ok"` must print `ok`. That path is `{{BASH_PATH}}`.
-`{{VAULT_PATH_FWD}}` is the vault path with forward slashes: `C:/Users/you/Documents/MyOS`.
+Take the first candidate that actually prints `3`, resolve it to an absolute path, and use that as
+`{{PYTHON_PATH}}`. `{{GUARD_COMMAND}}`, `{{GUARD_ARG1}}` and `{{GUARD_SCRIPT}}` are the fallback hook entry, a
+dependency-free check that warns the user when `{{PYTHON_PATH}}` stops working: they resolve to
+`sh` / `--` / `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on POSIX, and
+`cmd` / `/c` / `${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\guard.cmd` on Windows. The `--` keeps both
+platforms on the same three-slot argument shape, so the file stays valid JSON.
+
+Git Bash is not needed for the hooks any more, but `.claude/backup.sh` and
+`scripts/schedule-backup.ps1` still require it on Windows: `schedule-backup.ps1` locates it itself
+in PHASE 10b and throws if it cannot find one.
 
 ---
 
@@ -156,6 +167,10 @@ Write `{{VAULT_PATH}}/.gitignore`:
 .claude/hooks/.state/*
 !.claude/hooks/.state/.gitkeep
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # mem0 virtualenv and generated launcher icons
 .claude/mem0-venv/
 .claude/brain.png
@@ -196,240 +211,100 @@ email to use and set them with `git config`. Do not guess them.
 
 ## PHASE 4 - The continuity engine (hooks, Claude Code only)
 
-These four files are what make the memory protocol automatic: they inject the last session at
-startup and nudge for a memory write before the session ends. Hooks are a Claude Code feature, so
-skip to PHASE 6 if you are another agent. The protocol in PHASE 6 holds either way, it is just
-read rather than enforced. Write them exactly.
+One Python dispatcher plus two tiny fallback scripts are what make the memory protocol automatic:
+they inject the last session at startup and nudge for a memory write before the session ends.
+Hooks are a Claude Code feature, so skip to PHASE 6 if you are another agent. The protocol in
+PHASE 6 holds either way, it is just read rather than enforced.
 
-### Why they look like this
+### Why it looks like this
 
-- **No `python3`.** It is not guaranteed on Windows, so JSON escaping is pure bash.
-- **No `awk`.** A minimal Fedora image ships without it, and the failure was silent: the hook
-  emitted nothing and continuity vanished with no error.
-- **`stat -c` with a `-f` fallback.** GNU takes `-c`, BSD and macOS take `-f`.
-- **Windows path conversion.** Claude Code substitutes `$CLAUDE_PROJECT_DIR` as `C:\Users\...`,
-  which `dirname` cannot split. `to_posix()` converts it to `/c/Users/...`.
+- **One dispatcher, not per-event scripts.** `hooks.py session-start`, `hooks.py prompt-counter`,
+  `hooks.py session-end` share one process and one shared helper module, so there is one file to
+  keep correct instead of three drifting copies.
+- **State files are suffixed by session key.** Every state file (`session_start_time.<key>`,
+  `prompt_count.<key>`, `needs_reflection.<key>`) is keyed by a sha256 of the session id, so two
+  concurrent Claude sessions in the same vault never corrupt each other's prompt counters.
+- **Exec form, no shell, no shebang.** Claude Code invokes `{{PYTHON_PATH}}` directly with
+  `hooks.py` as an argument. Nothing depends on execute bits or `#!` lines, so it behaves
+  identically on Windows, Linux and macOS.
+- **A guard fallback rides alongside every hook.** `guard.sh` / `guard.cmd` actually run the
+  configured interpreter; if it fails, they print one line of warning JSON instead of leaving
+  continuity silently dead. If Python works, they print nothing.
 
-### `.claude/hooks/_common.sh`
+### `.claude/hooks/_common.py` and `.claude/hooks/hooks.py`
 
-```bash
-#!/bin/bash
-# Shared helpers for the continuity hooks. Sourced, never run directly.
+`_common.py` holds the shared helpers: `vault_root()`, `state_dir()`, `memory_dir()` (found by
+globbing `🔮 850-*`, never hardcoded), `session_key()`, `read_hook_input()`, `emit_context()`,
+`cap_section()`, `mtime()`, and `cleanup_state()`. `hooks.py` is the dispatcher: it reads the hook
+payload from stdin, derives the session key, and runs the matching subcommand. Every subcommand is
+wrapped so an unexpected exception exits 0 silently rather than crashing the hook. See
+`template/.claude/hooks/_common.py` and `template/.claude/hooks/hooks.py` in the repo for the full
+source; write them by copying those files rather than retyping them here.
 
-# C:\Users\x  ->  /c/Users/x   (anything already POSIX passes through untouched)
-to_posix() {
-  case "$1" in
-    [A-Za-z]:[\\/]*)
-      printf '%s' "$1" | sed -e 's|\\|/|g' -e 's|^\(.\):|/\L\1|'
-      ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
+### `.claude/hooks/guard.sh`
 
-# The vault is the grandparent of this file's directory: <vault>/.claude/hooks/
-resolve_vault_dir() {
-  local base
-  if [ -n "$CLAUDE_PROJECT_DIR" ]; then
-    base="$(to_posix "$CLAUDE_PROJECT_DIR")"
-    [ -d "$base" ] && { printf '%s' "$base"; return; }
-  fi
-  base="$(to_posix "$0")"
-  ( cd "$(dirname "$base")/../.." && pwd )
-}
-
-# Modification time of a file, or 0. GNU first, BSD second.
-mtime_of() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
-}
-
-# stdin -> a complete JSON string literal, quotes included.
-json_string() {
-  local s
-  s=$(cat)
-  s=${s//\\/\\\\}
-  s=${s//\"/\\\"}
-  s=${s//$'\r'/}
-  s=${s//$'\t'/\\t}
-  s=${s//$'\n'/\\n}
-  printf '"%s"' "$s"
-}
-
-# Emit a Claude Code hook payload: emit_context <hookEventName> <text>
-emit_context() {
-  local esc
-  esc=$(printf '%s' "$2" | json_string)
-  [ -n "$esc" ] && printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":%s}}\n' "$1" "$esc"
-}
+```sh
+#!/bin/sh
+"$1" -c "import sys" >/dev/null 2>&1 && exit 0
+printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Memory engine warning: the configured Python interpreter is not running. Run the doctor skill."}}\n'
 ```
 
-### `.claude/hooks/session-start.sh`
+### `.claude/hooks/guard.cmd`
 
-```bash
-#!/bin/bash
-# SessionStart - inject continuity (last session + threads + identity).
-# Runs on macOS, Linux and Windows (Git Bash). See _common.sh for the portability shims.
-. "$(dirname "$0")/_common.sh"
-
-VAULT_DIR="$(resolve_vault_dir)"
-MEM_DIR="$VAULT_DIR/🔮 850-{{COMPANION}}"
-STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
-mkdir -p "$STATE_DIR"
-date +%s > "$STATE_DIR/session_start_time"
-echo "0" > "$STATE_DIR/prompt_count"
-
-LAST_SESSION=""
-[ -f "$MEM_DIR/Last-Session.md" ] && LAST_SESSION=$(sed -n '/^## Session:/,/^## Previous/p' "$MEM_DIR/Last-Session.md" 2>/dev/null | head -50 | sed '$d')
-
-THREADS=""
-[ -f "$MEM_DIR/Threads.md" ] && THREADS=$(sed -n '/^## Active/,/^## Closed/p' "$MEM_DIR/Threads.md" 2>/dev/null | grep -E "^### |^\*\*Status:\*\*" | head -12)
-
-REFLECTION=""
-if [ -f "$STATE_DIR/needs_reflection" ]; then
-  REFLECTION="⚠️ The previous session ended without a memory write: $(cat "$STATE_DIR/needs_reflection"). If anything mattered, update the 🔮 850-{{COMPANION}} files."
-  rm -f "$STATE_DIR/needs_reflection"
-fi
-
-# A scheduled backup has nowhere to print, so a broken one is invisible until the
-# day you need it. backup.sh leaves its reason here; a stamp that stops moving
-# means the scheduled task itself is gone. Silent when no backup was ever set up.
-BACKUP_WARN=""
-if [ -f "$STATE_DIR/backup_failed" ]; then
-  since=$(head -1 "$STATE_DIR/backup_failed" 2>/dev/null)
-  why=$(sed -n '2p' "$STATE_DIR/backup_failed" 2>/dev/null)
-  BACKUP_WARN="⚠️ Vault backup failing since $since: $why (nothing else reports this, tell the user)"
-elif [ -f "$STATE_DIR/backup_ok" ]; then
-  age=$(( ( $(date +%s) - $(mtime_of "$STATE_DIR/backup_ok") ) / 3600 ))
-  if [ "$age" -ge 24 ] 2>/dev/null; then
-    BACKUP_WARN="⚠️ The vault backup has not run for $age hours. Its scheduled task may be gone. Tell the user."
-  fi
-fi
-
-CTX=""
-[ -n "$REFLECTION" ] && CTX="${CTX}${REFLECTION}
-
-"
-[ -n "$BACKUP_WARN" ] && CTX="${CTX}${BACKUP_WARN}
-
-"
-[ -n "$LAST_SESSION" ] && CTX="${CTX}[Memory - Last Session]
-${LAST_SESSION}
-
-"
-[ -n "$THREADS" ] && CTX="${CTX}[Memory - Active Threads]
-${THREADS}
-
-"
-CTX="${CTX}[Memory] Identity: {{COMPANION}}, {{USER_NAME}}'s thinking partner. Continuity is your job."
-
-emit_context "SessionStart" "$CTX"
-exit 0
+```bat
+@echo off
+%1 -c "import sys" >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Memory engine warning: the configured Python interpreter is not running. Run the doctor skill."}}
 ```
 
-### `.claude/hooks/prompt-counter.sh`
-
-```bash
-#!/bin/bash
-# UserPromptSubmit - count prompts; nudge once at 15 to save memory at session end.
-. "$(dirname "$0")/_common.sh"
-
-VAULT_DIR="$(resolve_vault_dir)"
-STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
-mkdir -p "$STATE_DIR"
-
-COUNT=0; [ -f "$STATE_DIR/prompt_count" ] && COUNT=$(cat "$STATE_DIR/prompt_count" 2>/dev/null || echo 0)
-COUNT=$((COUNT + 1)); echo "$COUNT" > "$STATE_DIR/prompt_count"
-
-if [ "$COUNT" -eq 15 ]; then
-  emit_context "UserPromptSubmit" "[Memory] This session is running long. Before it ends, update Last-Session.md and Threads.md."
-fi
-exit 0
-```
-
-### `.claude/hooks/session-end.sh`
-
-```bash
-#!/bin/bash
-# SessionEnd - if a real session ended without a memory write, leave a reflection marker.
-. "$(dirname "$0")/_common.sh"
-
-VAULT_DIR="$(resolve_vault_dir)"
-MEM_DIR="$VAULT_DIR/🔮 850-{{COMPANION}}"
-STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
-mkdir -p "$STATE_DIR"
-
-START=0; [ -f "$STATE_DIR/session_start_time" ] && START=$(cat "$STATE_DIR/session_start_time" 2>/dev/null || echo 0)
-PROMPTS=0; [ -f "$STATE_DIR/prompt_count" ] && PROMPTS=$(cat "$STATE_DIR/prompt_count" 2>/dev/null || echo 0)
-
-MODIFIED=0
-if [ -f "$MEM_DIR/Last-Session.md" ]; then
-  FM=$(mtime_of "$MEM_DIR/Last-Session.md")
-  [ "$FM" -gt "$START" ] 2>/dev/null && MODIFIED=1
-fi
-
-if [ "$PROMPTS" -ge 5 ] && [ "$MODIFIED" -eq 0 ]; then
-  echo "session ended without a memory write, $PROMPTS prompts, $(date '+%Y-%m-%d %H:%M')" > "$STATE_DIR/needs_reflection"
-fi
-
-rm -f "$STATE_DIR/session_start_time" "$STATE_DIR/prompt_count"
-exit 0
-```
-
-Then `chmod +x "{{VAULT_PATH}}/.claude/hooks/"*.sh`. On Windows `chmod` is a no-op, but the hooks
-still run because they are invoked as `bash script.sh` rather than executed directly.
+Nothing here needs `chmod +x`. Every hook is invoked in exec form with the script path passed as
+an argument, so no shebang or execute bit is ever relied on, on any platform.
 
 ---
 
 ## PHASE 5 - Wire the hooks (Claude Code only)
 
-Write `{{VAULT_PATH}}/.claude/settings.local.json`. **The two platforms need different forms.**
-
-### Linux and macOS
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"", "timeout": 15 } ] }
-    ],
-    "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/prompt-counter.sh\"", "timeout": 5 } ] }
-    ],
-    "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/session-end.sh\"", "timeout": 10 } ] }
-    ]
-  }
-}
-```
-
-### Windows
-
-The POSIX form above does **not** work: Windows has no shebang handling for `.sh` files, so each
-hook must be invoked through Git Bash explicitly. Substitute `{{BASH_PATH}}` and
-`{{VAULT_PATH_FWD}}` from PHASE 0.
+Write `{{VAULT_PATH}}/.claude/settings.local.json`. It is the same file on every platform: one
+Python dispatcher entry on each of the three events, plus one guard entry on `SessionStart`.
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/session-start.sh\"", "timeout": 15 } ] }
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-start"], "timeout": 15 },
+        { "type": "command", "command": "{{GUARD_COMMAND}}", "args": ["{{GUARD_ARG1}}", "{{GUARD_SCRIPT}}", "{{PYTHON_PATH}}"], "timeout": 5 }
+      ] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/prompt-counter.sh\"", "timeout": 5 } ] }
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "prompt-counter"], "timeout": 10 }
+      ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/session-end.sh\"", "timeout": 10 } ] }
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-end"], "timeout": 10 }
+      ] }
     ]
   }
 }
 ```
 
-Now **run the hook by hand** and confirm the output before moving on:
+`{{PYTHON_PATH}}` is the absolute interpreter path found in PHASE 0, resolved by actually running
+each candidate, not just checking for it on PATH. the guard's three placeholders resolve to
+`sh` / `--` / `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on POSIX, and
+`cmd` / `/c` / `${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\guard.cmd` on Windows. The `--` keeps both
+platforms on the same three-slot argument shape, so the file stays valid JSON.
+
+Now **run the dispatcher by hand** and confirm the output before moving on:
 
 ```bash
-bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"     # must print one line of JSON
+echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start
 ```
 
-If it prints nothing, the hook is broken and continuity is silently dead. Debug it now, not later.
+That must print exactly one line of JSON. If it prints nothing, the hook is broken and continuity
+is silently dead. Debug it now, not later.
 
 ---
 
@@ -974,8 +849,8 @@ grep -rl '{{' "{{VAULT_PATH}}" || echo "all placeholders resolved"
 If you built the hooks, check them too:
 
 ```bash
-ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # 4 *.sh including _common.sh
-bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"          # one line of JSON
+ls -la "{{VAULT_PATH}}/.claude/hooks/"                        # hooks.py, _common.py, guard.sh, guard.cmd
+echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start  # one line of JSON
 ```
 
 Then report to the user, in `{{LANGUAGE}}`:

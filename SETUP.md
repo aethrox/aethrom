@@ -20,8 +20,8 @@
 5. Verify each phase by running it, not by reading it. End with the first-run report.
 
 Placeholders: `{{LANGUAGE}}` · `{{OS_NAME}}` · `{{USER_NAME}}` · `{{USER_BIO}}` · `{{COMPANION}}` ·
-`{{VAULT_PATH}}` · `{{TODAY}}` · `{{USER_ID}}` · `{{VENV_PYTHON}}` ·
-(Windows only) `{{BASH_PATH}}` · `{{VAULT_PATH_FWD}}`
+`{{VAULT_PATH}}` · `{{TODAY}}` · `{{USER_ID}}` · `{{VENV_PYTHON}}` · `{{PYTHON_PATH}}` ·
+`{{GUARD_COMMAND}}` · `{{GUARD_ARG1}}` · `{{GUARD_SCRIPT}}`
 
 ---
 
@@ -32,7 +32,6 @@ Placeholders: `{{LANGUAGE}}` · `{{OS_NAME}}` · `{{USER_NAME}}` · `{{USER_BIO}
 | detect | `$env:OS -eq 'Windows_NT'` | `uname -s` = Linux | `uname -s` = Darwin |
 | machine name | `$env:COMPUTERNAME` | `hostname` | `scutil --get ComputerName` |
 | vault default | `$env:USERPROFILE\Documents\{{OS_NAME}}` | `~/Documents/{{OS_NAME}}` | see below |
-| shell for hooks | Git Bash | system bash | system bash |
 
 macOS vault default: if `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/` exists use
 `.../Documents/{{OS_NAME}}` (syncs across devices), else `~/Documents/{{OS_NAME}}`.
@@ -41,16 +40,37 @@ Derive `{{OS_NAME}}`: PascalCase the machine name and append `OS`, stripping
 `MacBook/Pro/Air/iMac/'s` and dashes. `Johns-MacBook-Pro` → `JohnOS`, `AETHROX` → `AethroxOS`.
 Propose it, let the user override. Set `{{TODAY}}` = `date +%F`.
 
-### Windows only - find Git Bash
-`C:\Windows\System32\bash.exe` is the **WSL** launcher and will not work; it cannot see the vault
-at a Windows path. Find the real one and use its full path as `{{BASH_PATH}}`:
+### Find a working Python
+The hooks are Python now, invoked directly (exec form, no shell, no shebang), so `{{PYTHON_PATH}}`
+must be an absolute path to an interpreter that actually runs. Presence on PATH is not enough: on
+this user's Windows machine `python3` resolves to a Microsoft Store stub that exists on PATH but
+fails the moment it is executed, while `python` works. So **run** each candidate, don't just check
+for it:
 
-```powershell
-(Get-Command git).Source -replace '\\cmd\\git\.exe$', '\bin\bash.exe'
+```bash
+python3 -c "import sys; print(sys.version_info[0])"   # try first
+python -c "import sys; print(sys.version_info[0])"    # fall back to this
 ```
 
-Verify it before continuing: `& $bash -c "echo ok"` must print `ok`.
-`{{VAULT_PATH_FWD}}` is the vault path with forward slashes: `C:/Users/you/Documents/MyOS`.
+Take the first candidate that actually prints `3`, then resolve it to an absolute path
+(`command -v python3` / `(Get-Command python).Source`) and use that as `{{PYTHON_PATH}}`.
+
+The guard is the second hook entry on `SessionStart` only, a dependency-free fallback that warns
+the user when `{{PYTHON_PATH}}` stops working. It sits on `SessionStart` alone because that is the
+only event whose output reaches the user as injected context, and one warning per session is
+enough. Resolve its three placeholders per platform:
+
+| | `{{GUARD_COMMAND}}` | `{{GUARD_ARG1}}` | `{{GUARD_SCRIPT}}` |
+|---|---|---|---|
+| Linux, macOS | `sh` | `--` | `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` |
+| Windows | `cmd` | `/c` | `${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\guard.cmd` |
+
+The `--` on POSIX is what keeps both platforms on the same three-slot argument shape, so
+`settings.json` stays valid JSON with placeholders only ever appearing inside strings.
+
+`backup.sh` and `scripts/schedule-backup.ps1` still require Git Bash on Windows: the Git Bash
+dependency was removed from the hooks, not from the repository. `scripts/schedule-backup.ps1`
+throws if it cannot find one. See PHASE 6b for finding it.
 
 ---
 
@@ -90,7 +110,6 @@ Claude Code is already installed - the user is running you. Don't reinstall it.
 ```bash
 mkdir -p "{{VAULT_PATH}}"
 cp -R ./template/. "{{VAULT_PATH}}/"
-chmod +x "{{VAULT_PATH}}/.claude/hooks/"*.sh
 ```
 ```powershell
 # Windows
@@ -102,8 +121,9 @@ The trailing `/.` is not a typo: `cp -R ./template/ dest/` puts a `template/` fo
 existing destination instead of copying the contents out. Check afterwards that `AGENTS.md` sits
 at the vault root and there is no `template` directory under it.
 
-`chmod` is a no-op on Windows, but the hooks still run there because they are invoked as
-`bash script.sh` rather than executed directly.
+Nothing here needs `chmod +x`. The hooks are invoked in exec form (`{{PYTHON_PATH}}` with
+`hooks.py` as an argument, `sh`/`cmd` with `guard.sh`/`guard.cmd` as an argument), so no shebang
+or execute bit is ever relied on, on any platform.
 
 Create only the optional scope folders the user picked:
 `⚔️ 200-Goals` · `🔐 400-Vault` · `💪 700-Body` · `🧘 800-Mind`
@@ -130,33 +150,35 @@ nudge for a memory write before the session ends. No other agent has them. If yo
 Code, skip to PHASE 5 and tell the user at the end that the protocol in `AGENTS.md` holds either
 way, it is just read rather than enforced.
 
-- **Linux/macOS:** `template/.claude/settings.json` already ships in the right form. Rename it to
-  `settings.local.json` in the vault.
-- **Windows:** delete `settings.json` and use `settings.windows.json` instead - rename it to
-  `settings.local.json` and substitute `{{BASH_PATH}}` and `{{VAULT_PATH_FWD}}`. The POSIX form
-  does not work: Windows has no shebang handling for `.sh` files.
+`template/.claude/settings.json` is the same file on every platform: one Python dispatcher
+(`hooks.py`) on each of the three events, plus one guard fallback on `SessionStart`, wired in
+exec form. Rename it to
+`settings.local.json` in the vault, then substitute the placeholders found in PHASE 0:
+`{{PYTHON_PATH}}`, `{{GUARD_COMMAND}}`, `{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}`.
 
-Then **run each hook by hand** and confirm the output before moving on:
+Then **run each subcommand by hand** and confirm the output before moving on:
 
 ```bash
-bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"     # must print one line of JSON
+echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start
 ```
 
-If it prints nothing, the hook is broken and continuity is silently dead - debug it now.
+That must print exactly one line of JSON. If it prints nothing, the hook is broken and continuity
+is silently dead, debug it now.
 
 ---
 
 ## PHASE 5 - Personalize
 
 First rename the folder from `🔮 850-Companion` to `🔮 850-{{COMPANION}}` (same value used
-everywhere else) - the hooks and `semantic-memory.py` reference `🔮 850-{{COMPANION}}` and
-expect it post-personalization. Keep the emoji and the `850-` prefix exactly; only the name
-after the dash changes.
+everywhere else). `hooks.py` never hardcodes this name (it globs for `🔮 850-*`), but
+`semantic-memory.py` does reference the resolved name and expects it post-personalization. Keep
+the emoji and the `850-` prefix exactly; only the name after the dash changes.
 
 Then replace every placeholder in every file under the vault. Files that contain them:
 `AGENTS.md`, `CLAUDE.md`, `🎯 100-Command-Center/Dashboard.md`, all of
-`🔮 850-{{COMPANION}}/*.md`, the three hooks, `.claude/backup.sh`, and
-`.claude/semantic-memory.py`. Then verify:
+`🔮 850-{{COMPANION}}/*.md`, `.claude/settings.local.json` (`{{PYTHON_PATH}}`, `{{GUARD_COMMAND}}`,
+`{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}`), `.claude/backup.sh`, and `.claude/semantic-memory.py`. `hooks.py` and
+`_common.py` themselves carry no placeholders. Then verify:
 
 ```bash
 grep -rl "{{" "{{VAULT_PATH}}" || echo "all placeholders resolved"
@@ -226,6 +248,10 @@ warning the session-start hook prints.
 On Windows the script routes the task through `.claude/run-hidden.vbs`, because Git Bash is a
 console program and the task would otherwise flash a black window on the desktop every hour. If
 the vault does not carry that file, the task still works but the window comes back.
+
+Note that `backup.sh` and `scripts/schedule-backup.ps1` still require Git Bash on Windows even
+though the hooks no longer do. `scripts/schedule-backup.ps1` locates it itself and throws if it
+cannot find one; the Git Bash dependency was removed from the hooks, not from the repository.
 
 > On Linux a user timer only runs while the user is logged in. Mention `loginctl enable-linger`
 > as an option, do not run it: it is a persistent system change of its own.
