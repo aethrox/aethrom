@@ -5,6 +5,10 @@
 .claude/hooks/.state/*
 !.claude/hooks/.state/.gitkeep
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # mem0 virtualenv and generated launcher icons
 .claude/mem0-venv/
 .claude/brain.png

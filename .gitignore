@@ -1,2 +1,14 @@
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
+
+# Running the engine by hand from this checkout, with no CLAUDE_PROJECT_DIR set,
+# resolves the vault to template/ and writes real output into it. Harmless once
+# it cannot be committed by accident.
+template/daily/*.md
+template/.claude/hooks/.state/*
+!template/.claude/hooks/.state/.gitkeep
+
+# Agent worktrees, created by the harness, never part of the project
+.claude/worktrees/

@@ -54,11 +54,22 @@ Continuity is four markdown files and a protocol. `Core.md`, `Last-Session.md`, 
 `AGENTS.md` tells the agent to read them when a session opens and write them back before it ends.
 Nothing there is specific to any one agent.
 
-In Claude Code three hooks make that automatic rather than voluntary. `session-start.sh` reads
-`Last-Session.md` and `Threads.md` and injects them as context, so the model opens every session
-knowing where the last one stopped. `prompt-counter.sh` nudges once at fifteen prompts to write
-memory before the session ends. `session-end.sh` notices when a session ended without a memory
-write and leaves a marker the next `session-start.sh` surfaces.
+In Claude Code a single Python dispatcher, `hooks.py`, makes that automatic rather than voluntary.
+Claude Code invokes it directly (`{{PYTHON_PATH}} hooks.py <subcommand>`, no shell, no shebang) on
+four events. On `SessionStart` it reads `Last-Session.md`, `Threads.md`, the first 60 lines of
+`Rules.md`, the journal bridge, the knowledge index and the daily log tail, and injects all of it
+as context inside a fixed character budget, so the model opens every session knowing where the
+last one stopped. On `UserPromptSubmit` it nudges once every fifteen prompts to write memory
+before the session ends. On `SessionEnd` and `PreCompact` it hands the session transcript to
+`flush.py`, which summarizes it with a model call and appends the result to the day's file in
+`daily/`; if a session ended without a memory write, it leaves a marker the next `SessionStart`
+surfaces. A dependency-free guard (`guard.sh` / `guard.cmd`) sits on `SessionStart` alone and warns
+instead of leaving continuity silently dead if the configured Python stops running.
+
+Once an evening, `compile.py` reads whatever changed in `daily/` and folds it into `knowledge/`, a
+compiled, cross-session concept base, through the same model subscription, isolated in a temp
+stage and checked against an allow-list before anything is promoted back into the vault (see
+`docs/COMPILE-SECURITY.md`).
 
 The vault files are the source of truth. mem0, if you enable it, is a searchable index on top and
 never more than that.
@@ -69,8 +80,8 @@ offers to schedule it hourly: a scheduled task on Windows, a systemd user timer 
 launchd agent on macOS.
 
 A scheduled backup has nowhere to print, so a broken one is normally invisible until the day you
-need it. `backup.sh` writes the reason it stopped into the hook state directory, and
-`session-start.sh` reads it out at the top of the next session, along with a warning if the
+need it. `backup.sh` writes the reason it stopped into the hook state directory, and the
+`SessionStart` hook reads it out at the top of the next session, along with a warning if the
 hourly run has not happened in over a day. It stays quiet on a vault where no backup was ever set
 up, and quiet again as soon as one succeeds.
 
@@ -80,14 +91,23 @@ up, and quiet again as soon as one succeeds.
 template/            the vault scaffold, copied to its real home during setup
   AGENTS.md          the companion's whole context: identity, structure, memory protocol
   CLAUDE.md          imports AGENTS.md, so Claude Code loads it automatically
-  .claude/hooks/     the continuity engine (session-start, prompt-counter, session-end,
-                     plus _common.sh, the portability shims they all source)
+  .aethrom-version   the installed template's version stamp, read by upgrade-check.py
+  .claude/hooks/     the continuity engine, Python, standard library only:
+                     hooks.py (the SessionStart/UserPromptSubmit/SessionEnd/PreCompact dispatcher),
+                     _common.py (shared helpers), flush.py (transcript to daily/), compile.py
+                     (daily/ to knowledge/, the guarded evening pass), graph_check.py (broken
+                     links and orphan notes), portalock.py (cross-platform file locking), and
+                     guard.sh / guard.cmd (the dependency-free SessionStart fallback)
+  .claude/skills/    doctor (health check) and import-history (ChatGPT/Claude/Gemini import)
   .claude/backup.sh  commit and push the vault, scheduled hourly during setup
   .claude/run-hidden.vbs       Windows only: runs the hourly backup with no console window
   .claude/semantic-memory.py   optional mem0 recall bridge
 hermes/skills/       the same memory protocol, as a hermes skill
-scripts/             desktop launchers and the backup scheduler, one per platform, both called
-                     from SETUP.md, plus the hermes installer (opt-in, run by hand)
+scripts/             desktop launchers, the backup scheduler and upgrade-check.py, called from
+                     SETUP.md, plus the hermes installer (opt-in, run by hand)
+tests/               the engine's test suite (`python -m unittest discover -s tests`), run on
+                     Windows, Linux and macOS in CI
+docs/COMPILE-SECURITY.md     the threat model and defenses around the unattended evening compile
 SETUP.md             the runbook the agent follows, needs this clone
 BRAIN.md             the same build as one self-contained file, needs nothing
 ```
@@ -96,7 +116,7 @@ BRAIN.md             the same build as one self-contained file, needs nothing
 
 | | Windows | Linux | macOS |
 |---|---|---|---|
-| Continuity hooks (Claude Code) | ✅ verified | ✅ verified | ⚠️ untested |
+| Continuity engine (Claude Code) | ✅ verified | ✅ verified | ⚠️ CI only, never run by hand |
 | `backup.sh` | ✅ verified | ✅ verified | ⚠️ untested |
 | Backup scheduler | ✅ verified (scheduled task) | ✅ verified (systemd user timer) | ⚠️ untested (launchd agent) |
 | Desktop launcher | ✅ verified (.lnk + 🧠 icon) | ⚠️ partially verified (.desktop) | ⚠️ untested (upstream applet) |
@@ -104,13 +124,16 @@ BRAIN.md             the same build as one self-contained file, needs nothing
 
 Verified means it was actually executed on that platform, not reasoned about. What that covered:
 
-- **Hooks.** A five-case suite: context injection, reflection marker written, marker injected and
-  cleared, no marker when memory was written, and the 15-prompt nudge. Run on Git Bash 5.3 under
-  Windows 11 and on Fedora 44 under WSL, with the emitted payload parsed as JSON every time.
-- **`backup.sh`.** Run against a throwaway remote on both platforms: the clean run, a normal commit
-  and push, a push rejected because the clone was behind, a real add/add rebase conflict that left
-  no half-rebase state, the failure marker holding one "since" timestamp across repeated failures,
-  the marker clearing on the next success, and the em dash refusal.
+- **The continuity engine.** `python -m unittest discover -s tests` is a 119-case suite covering
+  the hook dispatcher, the transcript-to-daily-log flush, the guarded evening compile, and the
+  knowledge graph checker. It runs in CI on Windows, Linux and macOS on every push
+  (`.github/workflows/ci.yml`), and was also run by hand on Windows 11 (three cases that need
+  symlink privilege skip there) and on Fedora 44 under WSL, with the hooks' emitted context parsed
+  as JSON every time.
+- **`backup.sh`.** Run against a throwaway remote on both Windows and Linux: the clean run, a
+  normal commit and push, a push rejected because the clone was behind, a real add/add rebase
+  conflict that left no half-rebase state, the failure marker holding one "since" timestamp across
+  repeated failures, the marker clearing on the next success, and the em dash refusal.
 - **Schedulers.** Both registered and unregistered for real. On Linux that meant a live
   `systemd --user` timer, checked with `systemctl --user list-timers`, triggered once by hand, then
   torn down with `disable --now` and its unit files removed. The failing and the succeeding backup
@@ -120,21 +143,25 @@ Verified means it was actually executed on that platform, not reasoned about. Wh
 
 ### Portability decisions
 
-- **No `awk`.** JSON escaping is pure bash. A minimal Fedora image ships without `awk`, and the
-  failure mode was silent: the hook emitted nothing and continuity vanished with no error.
-- **`stat -c` with a `-f` fallback.** GNU takes `-c`, BSD and macOS take `-f`.
-- **No `python3` dependency** in the hooks. It is not guaranteed on Windows.
-- **Windows path conversion.** Claude Code substitutes `$CLAUDE_PROJECT_DIR` as `C:\Users\...`,
-  which `dirname` cannot split. `to_posix()` in `_common.sh` converts it to `/c/Users/...`.
-- **Windows: the hourly backup goes through `wscript.exe`.** Git Bash is a console program, so
-  Task Scheduler pops a black window on the desktop every hour while you are logged in.
-  `.claude/run-hidden.vbs` runs it with no window, waits, and returns the exit code, so
+- **Python, standard library only.** The engine (`hooks.py`, `flush.py`, `compile.py`,
+  `graph_check.py`, `portalock.py`) is Python 3.7+ with no third-party dependency, works on
+  Python 3.7 through current, and is invoked directly (`{{PYTHON_PATH}}` and the script path as
+  arguments, no shell, no shebang), so the same file runs identically on Windows, Linux and macOS.
+  This is a hard dependency now: a vault with no working Python interpreter gets no automatic
+  memory at all, only the `guard.sh` / `guard.cmd` warning on `SessionStart`.
+- **Finding a Python that actually runs.** Presence on PATH is not enough: on Windows, `python3`
+  can resolve to a Microsoft Store stub that exists on PATH and fails the moment it runs, while
+  `python` works. SETUP.md runs each candidate rather than checking for it, and the `doctor` skill
+  resolves the same way at audit time.
+- **State files are suffixed by a session key.** A sha256 of the session id, so two concurrent
+  Claude sessions in the same vault never corrupt each other's counters.
+- **Windows: the hourly backup goes through `wscript.exe`.** `backup.sh` and the backup scheduler
+  still need Git Bash on Windows even though the hooks no longer do; that dependency was removed
+  from the continuity engine, not from the repository. Git Bash is a console program, so Task
+  Scheduler would otherwise flash a black window on the desktop every hour while you are logged
+  in. `.claude/run-hidden.vbs` runs it with no window, waits, and returns the exit code, so
   `LastTaskResult` still reports a failed backup. A fire-and-forget call would report success
   forever.
-
-> [!WARNING]
-> On Windows the hooks must be invoked with Git Bash. `C:\Windows\System32\bash.exe` is the WSL
-> launcher: it cannot see the vault at a Windows path and the hooks will silently do nothing.
 
 ## Which agent drives it
 
@@ -203,10 +230,17 @@ refuses to commit a file containing one.
 - mem0 relevance scores are weak until enough memories accumulate. It is a recall index, not the
   source of truth. The files in the companion's memory folder are.
 - `uv tool install mem0ai` fails: it is a library with no executables. Use a venv.
-- `SETUP.md` and `BRAIN.md` describe the same build and can drift apart. The three hooks embedded
-  in `BRAIN.md` are byte-identical to `template/.claude/hooks/` today; `_common.sh`, `backup.sh`,
-  `run-hidden.vbs` and `semantic-memory.py` are the same code with their header comments trimmed.
-  Nothing checks any of this, so a change to one side has to be made on the other by hand.
+- **Python is now a hard dependency.** There is no bash fallback: a vault whose configured
+  interpreter stops working gets no automatic memory at all until someone fixes it.
+- **macOS was never run by hand for the continuity engine.** CI runs the full test suite on
+  `macos-latest` on every push, and it passes there, but nobody has driven a real Claude Code
+  session against a real macOS vault. Treat the macOS column above as CI-verified, not hand-verified.
+- `SETUP.md` and `BRAIN.md` describe the same build and can drift apart, and nothing checks that
+  they stay in sync. `BRAIN.md` tells the installer to copy `hooks.py`, `_common.py`, `flush.py`,
+  `compile.py`, `graph_check.py` and `portalock.py` straight from this repo rather than inlining
+  them, so those cannot drift from the source, but it still inlines `backup.sh`, `run-hidden.vbs`
+  and `semantic-memory.py` as heredoc text with their header comments trimmed, and those copies can
+  go stale against the real files.
 
 ## Credits
 

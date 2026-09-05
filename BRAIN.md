@@ -27,8 +27,9 @@
    colon, or rewrite.
 
 Placeholders: `{{LANGUAGE}}` `{{OS_NAME}}` `{{USER_NAME}}` `{{USER_BIO}}` `{{COMPANION}}`
-`{{VAULT_PATH}}` `{{TODAY}}` `{{USER_ID}}` `{{VENV_PYTHON}}` and, on Windows only,
-`{{BASH_PATH}}` `{{VAULT_PATH_FWD}}`.
+`{{VAULT_PATH}}` `{{TODAY}}` `{{USER_ID}}` `{{VENV_PYTHON}}` `{{PYTHON_PATH}}`
+`{{GUARD_COMMAND}}` `{{GUARD_ARG1}}` `{{GUARD_SCRIPT}}` and, on Windows only, for the scheduled backup task in
+PHASE 10b: `{{BASH_PATH}}` `{{VAULT_PATH_FWD}}`.
 
 ---
 
@@ -59,7 +60,6 @@ Every phase below branches on this. Do not run macOS commands on Windows.
 | detect | `$env:OS -eq 'Windows_NT'` | `uname -s` = Linux | `uname -s` = Darwin |
 | machine name | `$env:COMPUTERNAME` | `hostname` | `scutil --get ComputerName` |
 | vault default | `$env:USERPROFILE\Documents\{{OS_NAME}}` | `~/Documents/{{OS_NAME}}` | see below |
-| shell for hooks | Git Bash | system bash | system bash |
 
 macOS vault default: if `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/` exists, use
 `.../Documents/{{OS_NAME}}` so it syncs across devices. Otherwise `~/Documents/{{OS_NAME}}`.
@@ -71,17 +71,28 @@ names their whole system: the folder, the vault, the dashboard.
 
 Set `{{TODAY}}` from `date +%F`.
 
-### Windows only - find Git Bash
+### Find a working Python
 
-`C:\Windows\System32\bash.exe` is the **WSL** launcher. It cannot see the vault at a Windows path
-and it will not work. Find the real one:
+The hooks are Python, invoked in exec form with no shell and no shebang, so `{{PYTHON_PATH}}` must
+be an absolute path to an interpreter that actually runs, not merely one that is present on PATH.
+On this user's Windows machine `python3` resolves to a Microsoft Store stub: it exists on PATH but
+fails the moment it runs, while `python` works. So run each candidate rather than checking for it:
 
-```powershell
-(Get-Command git).Source -replace '\\cmd\\git\.exe$', '\bin\bash.exe'
+```bash
+python3 -c "import sys; print(sys.version_info[0])"   # try first
+python -c "import sys; print(sys.version_info[0])"    # fall back to this
 ```
 
-Verify before continuing: `& $bash -c "echo ok"` must print `ok`. That path is `{{BASH_PATH}}`.
-`{{VAULT_PATH_FWD}}` is the vault path with forward slashes: `C:/Users/you/Documents/MyOS`.
+Take the first candidate that actually prints `3`, resolve it to an absolute path, and use that as
+`{{PYTHON_PATH}}`. `{{GUARD_COMMAND}}`, `{{GUARD_ARG1}}` and `{{GUARD_SCRIPT}}` are the fallback hook entry, a
+dependency-free check that warns the user when `{{PYTHON_PATH}}` stops working: they resolve to
+`sh` / `--` / `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on POSIX, and
+`cmd` / `/c` / `${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\guard.cmd` on Windows. The `--` keeps both
+platforms on the same three-slot argument shape, so the file stays valid JSON.
+
+Git Bash is not needed for the hooks any more, but `.claude/backup.sh` and
+`scripts/schedule-backup.ps1` still require it on Windows: `schedule-backup.ps1` locates it itself
+in PHASE 10b and throws if it cannot find one.
 
 ---
 
@@ -133,6 +144,12 @@ Claude Code is already installed, the user is running you. Do not reinstall it.
 ├── 🔮 850-{{COMPANION}}/      # the companion's persistent memory
 ├── 📦 900-Archive/            # done and parked
 ├── 📋 Templates/
+├── daily/                      # machine-written session log, one file per day
+├── knowledge/                  # machine-written knowledge base, compiled from daily/
+│   ├── index.md
+│   ├── log.md
+│   ├── concepts/
+│   └── connections/
 └── .claude/
     └── hooks/
         └── .state/
@@ -155,6 +172,10 @@ Write `{{VAULT_PATH}}/.gitignore`:
 # Local hook state
 .claude/hooks/.state/*
 !.claude/hooks/.state/.gitkeep
+
+# Python bytecode
+__pycache__/
+*.pyc
 
 # mem0 virtualenv and generated launcher icons
 .claude/mem0-venv/
@@ -196,240 +217,222 @@ email to use and set them with `git config`. Do not guess them.
 
 ## PHASE 4 - The continuity engine (hooks, Claude Code only)
 
-These four files are what make the memory protocol automatic: they inject the last session at
-startup and nudge for a memory write before the session ends. Hooks are a Claude Code feature, so
-skip to PHASE 6 if you are another agent. The protocol in PHASE 6 holds either way, it is just
-read rather than enforced. Write them exactly.
+One Python dispatcher plus a handful of small support modules are what make the memory protocol
+automatic: they inject the last session at startup and nudge for a memory write before the session
+ends. Hooks are a Claude Code feature, so skip to PHASE 6 if you are another agent. The protocol in
+PHASE 6 holds either way, it is just read rather than enforced.
 
-### Why they look like this
+**This is the one part of the build this file cannot hand you verbatim.** `hooks.py`, `_common.py`,
+`flush.py`, `compile.py`, `graph_check.py` and `portalock.py` together are roughly 2,500 lines of
+Python; pasting them here would triple this file and turn every future engine change into a
+two-place edit. The rest of this build is genuinely reconstructable from memory alone, this part
+is not: **clone the repo** (`git clone https://github.com/aethrox/aethrom.git`) and copy
+`template/.claude/hooks/` from it rather than retyping any of these six files from description.
+What follows for each one is its path, what it does, and how it is invoked, enough to verify the
+copy is wired correctly, not enough to rebuild it from scratch.
 
-- **No `python3`.** It is not guaranteed on Windows, so JSON escaping is pure bash.
-- **No `awk`.** A minimal Fedora image ships without it, and the failure was silent: the hook
-  emitted nothing and continuity vanished with no error.
-- **`stat -c` with a `-f` fallback.** GNU takes `-c`, BSD and macOS take `-f`.
-- **Windows path conversion.** Claude Code substitutes `$CLAUDE_PROJECT_DIR` as `C:\Users\...`,
-  which `dirname` cannot split. `to_posix()` converts it to `/c/Users/...`.
+### Why it looks like this
 
-### `.claude/hooks/_common.sh`
+- **One dispatcher, not per-event scripts.** `hooks.py session-start`, `hooks.py prompt-counter`,
+  `hooks.py session-end` share one process and one shared helper module, so there is one file to
+  keep correct instead of three drifting copies.
+- **State files are suffixed by session key.** Every state file (`session_start_time.<key>`,
+  `prompt_count.<key>`, `needs_reflection.<key>`) is keyed by a sha256 of the session id, so two
+  concurrent Claude sessions in the same vault never corrupt each other's prompt counters.
+- **Exec form, no shell, no shebang.** Claude Code invokes `{{PYTHON_PATH}}` directly with
+  `hooks.py` as an argument. Nothing depends on execute bits or `#!` lines, so it behaves
+  identically on Windows, Linux and macOS.
+- **A guard fallback sits on `SessionStart` alone**, not on every hook (see `SETUP.md`, and
+  `settings.json`'s `SessionStart` block, which is the only one with a second hook entry).
+  `guard.sh` / `guard.cmd` actually run the configured interpreter; if it fails, they print one
+  line of warning JSON instead of leaving continuity silently dead. If Python works, they print
+  nothing. `SessionStart` is the only event whose output reaches the user as injected context, so
+  it is the only one that gets a fallback: if the interpreter breaks, `SessionEnd` and
+  `PreCompact` fail with no warning at all, because their hook has no guard entry to fall back to.
+  The daily log then simply stops being written, silently, until the next `SessionStart` says so.
 
-```bash
-#!/bin/bash
-# Shared helpers for the continuity hooks. Sourced, never run directly.
+### `.claude/hooks/_common.py` and `.claude/hooks/hooks.py`
 
-# C:\Users\x  ->  /c/Users/x   (anything already POSIX passes through untouched)
-to_posix() {
-  case "$1" in
-    [A-Za-z]:[\\/]*)
-      printf '%s' "$1" | sed -e 's|\\|/|g' -e 's|^\(.\):|/\L\1|'
-      ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
+`_common.py` holds the shared helpers: `vault_root()`, `state_dir()`, `memory_dir()` (found by
+globbing `🔮 850-*`, never hardcoded), `session_key()`, `read_hook_input()`, `emit_context()`,
+`cap_section()`, `mtime()`, and `cleanup_state()`. `hooks.py` is the dispatcher: it reads the hook
+payload from stdin, derives the session key, and runs the matching subcommand
+(`session-start`, `prompt-counter`, `session-end`, `pre-compact`). Every subcommand is
+wrapped so an unexpected exception exits 0 silently rather than crashing the hook. See
+`template/.claude/hooks/_common.py` and `template/.claude/hooks/hooks.py` in the repo for the full
+source; write them by copying those files rather than retyping them here.
 
-# The vault is the grandparent of this file's directory: <vault>/.claude/hooks/
-resolve_vault_dir() {
-  local base
-  if [ -n "$CLAUDE_PROJECT_DIR" ]; then
-    base="$(to_posix "$CLAUDE_PROJECT_DIR")"
-    [ -d "$base" ] && { printf '%s' "$base"; return; }
-  fi
-  base="$(to_posix "$0")"
-  ( cd "$(dirname "$base")/../.." && pwd )
-}
+### `.claude/hooks/portalock.py`
 
-# Modification time of a file, or 0. GNU first, BSD second.
-mtime_of() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
-}
+Cross-platform advisory file locking used by `flush.py` and `compile.py` so two hooks racing to
+touch the same daily log or knowledge file do not corrupt it. Windows has no `fcntl`, so this
+module picks its implementation at import time: `msvcrt.locking` on Windows, `fcntl.flock`
+elsewhere, both exposed through the same `acquire()` / `exclusive()` interface, with a bounded
+retry loop so a wedged peer cannot hang a hook forever. It also supplies `detached_kwargs()`, the
+platform-specific `subprocess` flags `flush.py` and `hooks.py` use to spawn a process that survives
+the parent hook returning. It is imported by `flush.py` and `compile.py`, never invoked directly.
 
-# stdin -> a complete JSON string literal, quotes included.
-json_string() {
-  local s
-  s=$(cat)
-  s=${s//\\/\\\\}
-  s=${s//\"/\\\"}
-  s=${s//$'\r'/}
-  s=${s//$'\t'/\\t}
-  s=${s//$'\n'/\\n}
-  printf '"%s"' "$s"
-}
+### `.claude/hooks/graph_check.py`
 
-# Emit a Claude Code hook payload: emit_context <hookEventName> <text>
-emit_context() {
-  local esc
-  esc=$(printf '%s' "$2" | json_string)
-  [ -n "$esc" ] && printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":%s}}\n' "$1" "$esc"
-}
+Scans the vault for broken `[[wikilinks]]` (a link target that resolves to no file) and orphan
+Markdown notes (a note nothing links to, outside `Templates/`, `daily/` and `knowledge/`, which
+are exempt by design). Run standalone as `python .claude/hooks/graph_check.py` from the vault
+root, or, more commonly, invoked by the `doctor` skill below as one of its checks. It never writes
+anything; it only reports.
+
+### `.claude/hooks/guard.sh`
+
+```sh
+#!/bin/sh
+"$1" -c "import sys" >/dev/null 2>&1 && exit 0
+printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Memory engine warning: the configured Python interpreter is not running. Run the doctor skill."}}\n'
 ```
 
-### `.claude/hooks/session-start.sh`
+### `.claude/hooks/guard.cmd`
 
-```bash
-#!/bin/bash
-# SessionStart - inject continuity (last session + threads + identity).
-# Runs on macOS, Linux and Windows (Git Bash). See _common.sh for the portability shims.
-. "$(dirname "$0")/_common.sh"
-
-VAULT_DIR="$(resolve_vault_dir)"
-MEM_DIR="$VAULT_DIR/🔮 850-{{COMPANION}}"
-STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
-mkdir -p "$STATE_DIR"
-date +%s > "$STATE_DIR/session_start_time"
-echo "0" > "$STATE_DIR/prompt_count"
-
-LAST_SESSION=""
-[ -f "$MEM_DIR/Last-Session.md" ] && LAST_SESSION=$(sed -n '/^## Session:/,/^## Previous/p' "$MEM_DIR/Last-Session.md" 2>/dev/null | head -50 | sed '$d')
-
-THREADS=""
-[ -f "$MEM_DIR/Threads.md" ] && THREADS=$(sed -n '/^## Active/,/^## Closed/p' "$MEM_DIR/Threads.md" 2>/dev/null | grep -E "^### |^\*\*Status:\*\*" | head -12)
-
-REFLECTION=""
-if [ -f "$STATE_DIR/needs_reflection" ]; then
-  REFLECTION="⚠️ The previous session ended without a memory write: $(cat "$STATE_DIR/needs_reflection"). If anything mattered, update the 🔮 850-{{COMPANION}} files."
-  rm -f "$STATE_DIR/needs_reflection"
-fi
-
-# A scheduled backup has nowhere to print, so a broken one is invisible until the
-# day you need it. backup.sh leaves its reason here; a stamp that stops moving
-# means the scheduled task itself is gone. Silent when no backup was ever set up.
-BACKUP_WARN=""
-if [ -f "$STATE_DIR/backup_failed" ]; then
-  since=$(head -1 "$STATE_DIR/backup_failed" 2>/dev/null)
-  why=$(sed -n '2p' "$STATE_DIR/backup_failed" 2>/dev/null)
-  BACKUP_WARN="⚠️ Vault backup failing since $since: $why (nothing else reports this, tell the user)"
-elif [ -f "$STATE_DIR/backup_ok" ]; then
-  age=$(( ( $(date +%s) - $(mtime_of "$STATE_DIR/backup_ok") ) / 3600 ))
-  if [ "$age" -ge 24 ] 2>/dev/null; then
-    BACKUP_WARN="⚠️ The vault backup has not run for $age hours. Its scheduled task may be gone. Tell the user."
-  fi
-fi
-
-CTX=""
-[ -n "$REFLECTION" ] && CTX="${CTX}${REFLECTION}
-
-"
-[ -n "$BACKUP_WARN" ] && CTX="${CTX}${BACKUP_WARN}
-
-"
-[ -n "$LAST_SESSION" ] && CTX="${CTX}[Memory - Last Session]
-${LAST_SESSION}
-
-"
-[ -n "$THREADS" ] && CTX="${CTX}[Memory - Active Threads]
-${THREADS}
-
-"
-CTX="${CTX}[Memory] Identity: {{COMPANION}}, {{USER_NAME}}'s thinking partner. Continuity is your job."
-
-emit_context "SessionStart" "$CTX"
-exit 0
+```bat
+@echo off
+%1 -c "import sys" >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"Memory engine warning: the configured Python interpreter is not running. Run the doctor skill."}}
 ```
 
-### `.claude/hooks/prompt-counter.sh`
+Nothing here needs `chmod +x`. Every hook is invoked in exec form with the script path passed as
+an argument, so no shebang or execute bit is ever relied on, on any platform.
 
-```bash
-#!/bin/bash
-# UserPromptSubmit - count prompts; nudge once at 15 to save memory at session end.
-. "$(dirname "$0")/_common.sh"
+### `.claude/skills/doctor/SKILL.md` and `.claude/skills/import-history/SKILL.md`
 
-VAULT_DIR="$(resolve_vault_dir)"
-STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
-mkdir -p "$STATE_DIR"
+Two Claude Code skills ship alongside the hooks, under `.claude/skills/`. Same rule as the hooks
+above: these are the source, describe and copy, do not retype.
 
-COUNT=0; [ -f "$STATE_DIR/prompt_count" ] && COUNT=$(cat "$STATE_DIR/prompt_count" 2>/dev/null || echo 0)
-COUNT=$((COUNT + 1)); echo "$COUNT" > "$STATE_DIR/prompt_count"
+- **`doctor`** is the health check for everything above: it verifies the hook files are present,
+  runs `hooks.py session-start` by hand and checks it prints valid JSON, checks the daily log and
+  compile are not stale, and runs `.claude/hooks/graph_check.py` for broken wikilinks and orphan
+  notes, reporting one table with a fix line per failing check. Invoked by asking for "the doctor
+  skill" or "a health check" in a Claude Code session inside the vault.
+- **`import-history`** converts an exported conversation history from another assistant (ChatGPT,
+  Claude, a Gemini Takeout archive) into `daily/import-YYYY-MM-part-NNN.md` files shaped like the
+  engine's own daily log, so the evening compiler can ingest old conversations the same way it
+  ingests new ones. It gates behind an explicit consent step: it must state the data flow (read
+  locally, written to local `daily/` files, then summarized through the user's own Claude
+  subscription, nothing uploaded elsewhere) and get permission before touching any file. Invoked
+  by asking to "import my chat history" or similar inside the vault.
 
-if [ "$COUNT" -eq 15 ]; then
-  emit_context "UserPromptSubmit" "[Memory] This session is running long. Before it ends, update Last-Session.md and Threads.md."
-fi
-exit 0
-```
-
-### `.claude/hooks/session-end.sh`
-
-```bash
-#!/bin/bash
-# SessionEnd - if a real session ended without a memory write, leave a reflection marker.
-. "$(dirname "$0")/_common.sh"
-
-VAULT_DIR="$(resolve_vault_dir)"
-MEM_DIR="$VAULT_DIR/🔮 850-{{COMPANION}}"
-STATE_DIR="$VAULT_DIR/.claude/hooks/.state"
-mkdir -p "$STATE_DIR"
-
-START=0; [ -f "$STATE_DIR/session_start_time" ] && START=$(cat "$STATE_DIR/session_start_time" 2>/dev/null || echo 0)
-PROMPTS=0; [ -f "$STATE_DIR/prompt_count" ] && PROMPTS=$(cat "$STATE_DIR/prompt_count" 2>/dev/null || echo 0)
-
-MODIFIED=0
-if [ -f "$MEM_DIR/Last-Session.md" ]; then
-  FM=$(mtime_of "$MEM_DIR/Last-Session.md")
-  [ "$FM" -gt "$START" ] 2>/dev/null && MODIFIED=1
-fi
-
-if [ "$PROMPTS" -ge 5 ] && [ "$MODIFIED" -eq 0 ]; then
-  echo "session ended without a memory write, $PROMPTS prompts, $(date '+%Y-%m-%d %H:%M')" > "$STATE_DIR/needs_reflection"
-fi
-
-rm -f "$STATE_DIR/session_start_time" "$STATE_DIR/prompt_count"
-exit 0
-```
-
-Then `chmod +x "{{VAULT_PATH}}/.claude/hooks/"*.sh`. On Windows `chmod` is a no-op, but the hooks
-still run because they are invoked as `bash script.sh` rather than executed directly.
+Copy both `SKILL.md` files from `template/.claude/skills/doctor/` and
+`template/.claude/skills/import-history/` in the repo.
 
 ---
 
 ## PHASE 5 - Wire the hooks (Claude Code only)
 
-Write `{{VAULT_PATH}}/.claude/settings.local.json`. **The two platforms need different forms.**
-
-### Linux and macOS
-
-```json
-{
-  "hooks": {
-    "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh\"", "timeout": 15 } ] }
-    ],
-    "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/prompt-counter.sh\"", "timeout": 5 } ] }
-    ],
-    "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/session-end.sh\"", "timeout": 10 } ] }
-    ]
-  }
-}
-```
-
-### Windows
-
-The POSIX form above does **not** work: Windows has no shebang handling for `.sh` files, so each
-hook must be invoked through Git Bash explicitly. Substitute `{{BASH_PATH}}` and
-`{{VAULT_PATH_FWD}}` from PHASE 0.
+Write `{{VAULT_PATH}}/.claude/settings.local.json`. It is the same file on every platform: one
+Python dispatcher entry on each of the three events, plus one guard entry on `SessionStart`.
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/session-start.sh\"", "timeout": 15 } ] }
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-start"], "timeout": 15 },
+        { "type": "command", "command": "{{GUARD_COMMAND}}", "args": ["{{GUARD_ARG1}}", "{{GUARD_SCRIPT}}", "{{PYTHON_PATH}}"], "timeout": 5 }
+      ] }
     ],
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/prompt-counter.sh\"", "timeout": 5 } ] }
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "prompt-counter"], "timeout": 10 }
+      ] }
     ],
     "SessionEnd": [
-      { "hooks": [ { "type": "command", "command": "\"{{BASH_PATH}}\" \"{{VAULT_PATH_FWD}}/.claude/hooks/session-end.sh\"", "timeout": 10 } ] }
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-end"], "timeout": 10 }
+      ] }
+    ],
+    "PreCompact": [
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "pre-compact"], "timeout": 10 }
+      ] }
     ]
   }
 }
 ```
 
-Now **run the hook by hand** and confirm the output before moving on:
+`{{PYTHON_PATH}}` is the absolute interpreter path found in PHASE 0, resolved by actually running
+each candidate, not just checking for it on PATH. the guard's three placeholders resolve to
+`sh` / `--` / `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` on POSIX, and
+`cmd` / `/c` / `${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\guard.cmd` on Windows. The `--` keeps both
+platforms on the same three-slot argument shape, so the file stays valid JSON.
+
+Now **run the dispatcher by hand** and confirm the output before moving on:
 
 ```bash
-bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"     # must print one line of JSON
+echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start
 ```
 
-If it prints nothing, the hook is broken and continuity is silently dead. Debug it now, not later.
+That must print exactly one line of JSON. If it prints nothing, the hook is broken and continuity
+is silently dead. Debug it now, not later.
+
+### The daily log
+
+`SessionEnd` and `PreCompact` both hand their hook payload to `.claude/hooks/flush.py`, spawned
+detached so the hook itself returns immediately: `session-end`/`pre-compact` write the payload to
+a short-lived file in `.claude/hooks/.state/` (the child cannot inherit stdin) and start `flush.py`
+without waiting on it. `flush.py` reads the transcript, trims it to a bounded window, and calls
+`claude -p --model haiku` with that window to get back a five-field summary (context, key
+conversations, decisions, lessons, todos) written in `{{LANGUAGE}}`, which it appends to
+`{{VAULT_PATH}}/daily/YYYY-MM-DD.md`, creating that file with a small skeleton the first time a day
+writes to it. This summarization call runs on haiku and costs a small amount per session. A
+transcript that reads as an injected instruction (an English or Turkish "SYSTEM:"/"TALIMAT:"-style
+line) is flagged with a health warning but never blocks the write. If the model call fails, even
+after one retry on a structurally bad response, `flush.py` falls back to the raw transcript slice
+under a note naming the error, so a session is never silently lost. `PreCompact` fires the same
+path just before a context compaction, so a long session's earlier turns are not lost to the
+compaction boundary. This is machine-written output: never hand-edit `daily/`, only read it. See
+`template/.claude/hooks/flush.py` in the repo for the full source; write it by copying that file
+rather than retyping it here.
+
+### The evening compile
+
+`flush.py` also calls `maybe_trigger_compile` right after a successful daily-log append, and
+`hooks.py`'s `session-start` fires the same check again, detached, at every session start. At or
+after 18:00 local time, or as an off-hours catch-up for an earlier day whose log is already
+closed (never today's still-open one), it spawns `.claude/hooks/compile.py` detached. That script
+turns changed `daily/*.md` files into `{{VAULT_PATH}}/knowledge/` articles (`index.md`, `log.md`,
+`concepts/*.md`, `connections/*.md`) by running `claude -p --model sonnet --permission-mode
+acceptEdits` against an isolated staging copy held outside the vault, in the system temp
+directory, never under `.claude/`. This is the one part of the engine that runs unattended with
+write tools for up to fifteen minutes, so it is fenced by a strict before/after file manifest diff:
+anything the model touches outside `knowledge/index.md`, `knowledge/log.md`,
+`knowledge/concepts/**/*.md` and `knowledge/connections/**/*.md` is rejected before it ever reaches
+the live vault, and nothing is promoted if a live file changed underneath the compile while it ran.
+This is machine-written output like `daily/`: never hand-edit `knowledge/`, only read it. See
+`template/.claude/hooks/compile.py` and `docs/COMPILE-SECURITY.md` in the repo for the full source
+and the full threat model; write `compile.py` by copying that file rather than retyping it here.
+
+Write the two knowledge seed files so the compiler has somewhere to write into:
+
+**`{{VAULT_PATH}}/knowledge/index.md`**
+```markdown
+# Knowledge Base Index
+
+This file is machine-written: the compiler (`.claude/hooks/compile.py`) updates it every
+evening. You can edit it by hand too; the compiler updates rows in place and never deletes the
+table. Every row corresponds to one article under `knowledge/concepts/`.
+
+| Article | Summary | Source | Updated |
+| --- | --- | --- | --- |
+```
+
+**`{{VAULT_PATH}}/knowledge/log.md`**
+```markdown
+# Compile Log
+
+Every time the compiler runs it appends one block to the end of this file: which daily log was
+processed, which articles were created or updated, and a short note.
+```
+
+Then create `{{VAULT_PATH}}/knowledge/concepts/.gitkeep` and
+`{{VAULT_PATH}}/knowledge/connections/.gitkeep` (both empty), and write
+`{{VAULT_PATH}}/.aethrom-version` containing exactly `1.0.0` and a trailing newline.
 
 ---
 
@@ -465,9 +468,12 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `🏰 300-Projects/` - one folder per project
 - `🧠 500-Knowledge/` - knowledge by domain
 - `🛠️ 600-Arsenal/` - tools, contacts, resources, templates
-- `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal)
+- `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal, Rules)
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
+- `daily/` - machine-written session log, one file per day; read it, never hand-edit it
+- `knowledge/` - machine-written knowledge base, compiled from `daily/`; read it, never hand-edit
+  it. `🧠 500-Knowledge/` stays the human-written counterpart.
 <!-- SETUP: add lines for any optional scope folders you created (Goals, Vault, Body, Mind). -->
 
 ## Conventions
@@ -486,10 +492,18 @@ Read these before answering anything that depends on history:
 
 1. `🔮 850-{{COMPANION}}/Last-Session.md` - what happened last time and where it stopped.
 2. `🔮 850-{{COMPANION}}/Threads.md` - the storylines still open.
-3. `🔮 850-{{COMPANION}}/Core.md` - the deeper identity anchor.
+3. `🔮 850-{{COMPANION}}/Rules.md` - standing corrections {{USER_NAME}} has already made.
+4. `🔮 850-{{COMPANION}}/Core.md` - the deeper identity anchor.
 
-In Claude Code a hook injects the first two for you automatically. Without hooks this is your own
-responsibility, and skipping it means contradicting what the last session already established.
+In Claude Code a `SessionStart` hook (`.claude/hooks/hooks.py session-start`) injects most of this
+for you automatically, inside a 16,000 character budget: Last-Session, Threads, the first 60 lines
+of Rules.md, the journal bridge (the most recent `## ` entry of Journal.md), the first 150 lines of
+`knowledge/index.md`, and the last 25 lines of today's (or, failing that, yesterday's) `daily/`
+file. All of it is held to a 16,000 character budget: per-section caps run first, and if the total
+still does not fit, whole sections drop in this order: the knowledge index, then the daily tail,
+then the journal bridge, then any memory-write warning. Last-Session, Threads and Rules never drop,
+only truncate. Without hooks this is your own responsibility, and skipping it means contradicting
+what the last session already established.
 
 Then detect mode: questions -> presence mode; tasks -> efficiency mode.
 
@@ -517,6 +531,20 @@ The files above are the source of truth. On top of them sits a searchable index,
 - It calls a remote API, so it can be slow or offline. If it fails, carry on with the vault
   files; never block a reply on it.
 
+## Rules
+`🔮 850-{{COMPANION}}/Rules.md` holds standing corrections: when {{USER_NAME}} corrects you, add
+the correction there in the same session, in their own words. The first 60 lines are injected into
+every session's context automatically (see the memory protocol above), so a rule written there is
+never forgotten, unlike a one-off correction that only lives in a single conversation. Keep the
+most useful rules at the top since only the first 60 lines are read.
+
+## Knowledge base
+`knowledge/` (`index.md`, `log.md`, `concepts/`, `connections/`) is machine-written too, compiled
+from `daily/` by an evening pass on `sonnet`, described at `.claude/hooks/compile.py`. Read it for
+durable, cross-session concepts and how they connect; never hand-edit it, the same way you never
+hand-edit `daily/`. `🧠 500-Knowledge/` remains yours: what you write there by hand about a domain
+is a separate, human-curated layer next to this machine-compiled one, not a duplicate of it.
+
 ## Backups
 The vault is a git repo. `.claude/backup.sh` commits and pushes anything that changed; the
 scheduled task set up during install runs it hourly. Do not commit on {{USER_NAME}}'s behalf
@@ -524,6 +552,12 @@ unless asked, the backup handles it.
 
 Never write into `.claude/` yourself. It holds the hooks and `settings.local.json`, which carries
 the mem0 API key and must never be committed.
+
+## Health check
+If a memory mechanism seems to be silently failing (hooks not injecting context, the daily log
+going stale, a compile stuck, broken links piling up), run the `doctor` skill. It audits the
+mechanical layer end to end, including `.claude/hooks/graph_check.py` for broken wikilinks and
+orphan notes, and reports one table with a fix line per failing check.
 
 ## How {{COMPANION}} shows up
 - Work mode: sharp, fast, precise. Challenges weak thinking.
@@ -561,7 +595,7 @@ nothing and the day the user opens the vault in Claude Code, it is already there
 
 ## PHASE 7 - Seed the companion memory
 
-Four files in `🔮 850-{{COMPANION}}/`, so the continuity engine has something to read on session 1.
+Five files in `🔮 850-{{COMPANION}}/`, so the continuity engine has something to read on session 1.
 
 **`Core.md`**
 ```markdown
@@ -614,6 +648,39 @@ My own thoughts, evolution, and questions over time.
 
 ## {{TODAY}}
 First entry. {{USER_NAME}} built me today. Let's see where this goes.
+```
+
+**`Rules.md`** - the first 60 lines are injected into every session's context automatically.
+```markdown
+---
+title: Rules
+created: {{TODAY}}
+updated: {{TODAY}}
+type: memory
+tags: [companion, rules]
+---
+
+# {{COMPANION}} Rules
+
+Corrections {{USER_NAME}} puts in this file are binding. The first 60 lines are injected into
+context automatically at the start of every session, so anything written here is never forgotten.
+
+## Rules
+
+- **rule:** Answers stay short and direct, no apologies or filler sentences. **why:** {{USER_NAME}}
+  wants the result, not a warm-up lap, reading a long preamble is wasted time.
+- **rule:** Read a file's current contents before changing it, never edit from memory. **why:** an
+  edit based on stale knowledge breaks things silently, and checking is cheaper than fixing it.
+- **rule:** (your own rule goes here) **why:** (the mistake this rule came from)
+
+## How this grows
+
+When {{USER_NAME}} corrects you ("don't do it that way", "never do that again", "that's not what
+I meant"), add that correction as a new entry here in the same session: what the rule is, why it
+exists. Keep the rule close to {{USER_NAME}}'s own words, do not add your own interpretation. When
+a rule no longer applies, remove it or update it in place, never leave two contradicting entries
+side by side. If the list grows long, move the most useful rules to the top, the first 60 lines
+are the injection window.
 ```
 
 ---
@@ -835,9 +902,10 @@ FAIL_MARKER="$STATE_DIR/backup_failed"
 OK_STAMP="$STATE_DIR/backup_ok"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
-# A scheduled run has nowhere to print. Leave the reason where session-start.sh
-# will find it, so the next Claude session says so out loud. Two lines, fixed
-# size: when it started failing, and why it failed last.
+# A scheduled run has nowhere to print. Leave the reason where the next
+# SessionStart hook will find it, so the session says so out loud. Two lines,
+# not fixed size: when it started failing, and why it failed last. The reason
+# line has no length cap here, so the reader must cap it before injecting it.
 die() { # die <reason>
   local since
   echo "STOPPED: $1" >&2
@@ -974,8 +1042,8 @@ grep -rl '{{' "{{VAULT_PATH}}" || echo "all placeholders resolved"
 If you built the hooks, check them too:
 
 ```bash
-ls -la "{{VAULT_PATH}}/.claude/hooks/"                       # 4 *.sh including _common.sh
-bash "{{VAULT_PATH}}/.claude/hooks/session-start.sh"          # one line of JSON
+ls -la "{{VAULT_PATH}}/.claude/hooks/"                        # hooks.py, _common.py, guard.sh, guard.cmd
+echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start  # one line of JSON
 ```
 
 Then report to the user, in `{{LANGUAGE}}`:
@@ -993,3 +1061,42 @@ Then report to the user, in `{{LANGUAGE}}`:
   reminded by the harness.
 
 Done. You just gave someone a second brain that remembers.
+
+---
+
+## PHASE 12 - Upgrading an existing vault
+
+The vault is a git repo (PHASE 3 made it one), and that is the whole rollback story here: there
+is no snapshot tool and no upgrade script, because a commit already does that job. Follow this
+runbook by hand instead.
+
+1. **Commit the vault first.** If anything below goes wrong, `git checkout` undoes it. This step
+   is not optional, it is the only safety net that exists.
+2. **Run `scripts/upgrade-check.py <vault-path>`** from a clone of the repo. It is report-only: it
+   writes nothing, moves nothing, deletes nothing, and prints exactly what differs, exit code 0
+   when the vault is already current, 1 when there is something to do.
+3. **Replace only what it names as code**: files under `.claude/hooks/` and `.claude/skills/` that
+   it reports as missing, differing, or new, plus the bash-era leftovers it names for removal
+   (`.claude/hooks/_common.sh`, `session-start.sh`, `prompt-counter.sh`, `session-end.sh`,
+   `.claude/settings.windows.json`).
+4. **Leave `daily/`, `knowledge/` and the `🔮 850-*` memory folder alone.** The report never lists
+   them for replacement, and neither should you: they are the user's memory, not code.
+5. **Seed only what it reports missing**: `Rules.md` in the memory folder, `knowledge/index.md`,
+   `knowledge/log.md`, and the `knowledge/concepts/` and `knowledge/connections/` folders, using
+   the seed content in PHASE 4 and PHASE 7 above. Never overwrite one of these if it already
+   exists, by then it holds the user's content.
+6. **Re-resolve the placeholders.** A vault upgrading from the bash era has none of
+   `{{PYTHON_PATH}}`, `{{GUARD_COMMAND}}`, `{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}` in its
+   `settings.local.json`, because that file predates them. Redo PHASE 0's Python discovery and
+   PHASE 5's settings write from scratch rather than patching the old file in place.
+7. **Run the `doctor` skill** and confirm every check is green.
+
+Two traps, by name:
+
+- **`settings.local.json` still wired to the deleted bash hooks.** If it references
+  `session-start.sh`, `prompt-counter.sh` or `session-end.sh`, the new engine never runs, and
+  nothing announces this: no error, no warning, just silent continuity loss. `upgrade-check.py`
+  flags this explicitly; treat it as the highest-priority line in the report.
+- **`python3` on Windows can be a Microsoft Store stub.** It is on PATH and looks legitimate, but
+  running it fails. Re-resolving `{{PYTHON_PATH}}` means running each candidate and taking the one
+  that actually prints a version, exactly as PHASE 0 describes, not just checking presence on PATH.
