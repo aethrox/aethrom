@@ -179,6 +179,20 @@ session is never silently lost. `PreCompact` runs the same path just before a co
 so a long session is not lost to the compaction boundary. `daily/` is machine-written: read it,
 never hand-edit it.
 
+### The evening compile
+
+`flush.py` also calls `maybe_trigger_compile` right after a successful daily-log append: at or
+after 18:00 local time it spawns `.claude/hooks/compile.py` detached, which turns changed
+`daily/*.md` files into `knowledge/` articles (`index.md`, `log.md`, `concepts/`, `connections/`)
+using `claude -p --model sonnet --permission-mode acceptEdits` against an isolated staging copy,
+outside the vault. `hooks.py` also fires a catch-up pass, detached, at the tail of every
+`session-start` (`flush.py --maybe-compile`), so a day whose last session ends before 18:00 still
+gets compiled the next time a session starts. This is the one part of the engine that runs
+unattended with write tools, so it is fenced by a strict before/after manifest diff that rejects
+anything outside `knowledge/` before it ever reaches the live vault; see
+`docs/COMPILE-SECURITY.md` for the full threat model. `knowledge/` is machine-written like
+`daily/`: read it, never hand-edit it.
+
 ---
 
 ## PHASE 5 - Personalize
@@ -192,8 +206,9 @@ Then replace every placeholder in every file under the vault. Files that contain
 `AGENTS.md`, `CLAUDE.md`, `🎯 100-Command-Center/Dashboard.md`, all of
 `🔮 850-{{COMPANION}}/*.md`, `.claude/settings.local.json` (`{{PYTHON_PATH}}`, `{{GUARD_COMMAND}}`,
 `{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}`), `.claude/backup.sh`, `.claude/semantic-memory.py`, and
-`.claude/hooks/flush.py` (`{{LANGUAGE}}`, inside the summarization prompt it sends to `claude -p`).
-`hooks.py` and `_common.py` themselves carry no placeholders. Then verify:
+`.claude/hooks/flush.py` and `.claude/hooks/compile.py` (both carry `{{LANGUAGE}}`, inside the
+prompt each sends to `claude -p`). `hooks.py`, `_common.py` and `portalock.py` themselves carry no
+placeholders. Then verify:
 
 ```bash
 grep -rl "{{" "{{VAULT_PATH}}" || echo "all placeholders resolved"

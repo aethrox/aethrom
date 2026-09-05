@@ -7,6 +7,9 @@ Phase 3b fills in `build_entry_body`, the seam Phase 3a left: it now calls
 `claude -p` to turn the transcript slice into a five-field summary. If that
 call fails after one retry, the raw transcript slice is kept instead, under
 a note naming the error, so a session is never silently lost.
+Phase 4 adds `maybe_trigger_compile`, called after a successful daily-log
+append: it spawns `compile.py` detached, either on the evening schedule or,
+off-hours, as a catch-up for earlier days whose log is already closed.
 """
 
 import sys
@@ -20,11 +23,12 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -455,6 +459,127 @@ def _append_daily(vault_root: Path, entry_body: str, reason: str, now: dt.dateti
 
 
 # ---------------------------------------------------------------------------
+# Triggering the evening compile
+# ---------------------------------------------------------------------------
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _effective_hour(now: dt.datetime) -> int:
+    """The hour used to decide whether the evening compile is due.
+
+    AETHROM_FAKE_HOUR lets tests exercise the 18:00 boundary without depending
+    on the wall clock. Unset in normal operation, where `now.hour` is used.
+    """
+    fake_hour = os.environ.get("AETHROM_FAKE_HOUR")
+    if fake_hour is None:
+        return now.hour
+    hour = int(fake_hour)
+    if not 0 <= hour <= 23:
+        raise ValueError("fake-hour-out-of-range")
+    return hour
+
+
+def maybe_trigger_compile(
+    vault_root: "Path | None" = None,
+    now: "dt.datetime | None" = None,
+    popen_factory: "Callable[..., Any] | None" = None,
+    catch_up: bool = False,
+) -> bool:
+    """Start one detached `compile.py` run when daily content has changed.
+
+    Two call sites, because one is not enough. The SessionEnd path (`catch_up`
+    False) fires the scheduled evening pass at or after 18:00 local time.
+    The SessionStart path (`catch_up` True) fires at any hour, but only for
+    logs of days that are already over: a day whose last session closes
+    before 18:00 never reaches the evening path at all, and its log would
+    otherwise sit uncompiled indefinitely. Off-hours, today's still-open log
+    is never compiled early, since that would ingest a partial day.
+    """
+    if vault_root is None:
+        vault_root = _common.vault_root()
+    current = now or dt.datetime.now().astimezone()
+    on_schedule = _effective_hour(current) >= 18
+    if not (on_schedule or catch_up):
+        return False
+
+    state_dir = vault_root / ".claude" / "hooks" / ".state"
+    compile_state = _load_json_object(state_dir / "compile-state.json", {"ingested": {}})
+    ingested = compile_state.get("ingested", {})
+    if not isinstance(ingested, dict):
+        raise ValueError("compile-state-ingested-invalid")
+
+    daily_dir = vault_root / "daily"
+    if daily_dir.exists():
+        daily_stat = daily_dir.lstat()
+        if stat.S_ISLNK(daily_stat.st_mode) or not stat.S_ISDIR(daily_stat.st_mode):
+            raise ValueError("unsafe-daily-directory")
+        daily_paths = sorted(daily_dir.glob("*.md"))
+    else:
+        daily_paths = []
+
+    today_name = "{}.md".format(current.strftime("%Y-%m-%d"))
+    changed_today = False
+    changed_earlier = False
+    for path in daily_paths:
+        path_stat = path.lstat()
+        if stat.S_ISLNK(path_stat.st_mode) or not stat.S_ISREG(path_stat.st_mode):
+            raise ValueError("unsafe-daily-source:{}".format(path.name))
+        if ingested.get(path.name) != _sha256(path):
+            if path.name == today_name:
+                changed_today = True
+            else:
+                changed_earlier = True
+                break
+    if not (changed_today or changed_earlier):
+        return False
+    # Off-hours catch-up only compiles days that are done. Today's log is
+    # still being written; compiling it early would ingest a partial day.
+    if not on_schedule and not changed_earlier:
+        return False
+
+    state_dir.mkdir(parents=True, exist_ok=True)
+    trigger = state_dir / "compile-trigger-{}".format(current.strftime("%Y-%m-%d"))
+    try:
+        descriptor = os.open(str(trigger), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        # Another session ending around the same time already claimed today's
+        # run: one compile, not two.
+        return False
+    os.close(descriptor)
+
+    environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    launcher = popen_factory or subprocess.Popen
+    compile_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "compile.py")
+    compile_argv = [sys.executable, compile_script, "--trigger-claim", str(trigger)]
+    if not on_schedule:
+        compile_argv.extend(["--before-date", current.date().isoformat()])
+    try:
+        launcher(
+            compile_argv,
+            cwd=str(vault_root),
+            env=environment,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **portalock.detached_kwargs()
+        )
+    except OSError:
+        try:
+            trigger.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Deduplication
 # ---------------------------------------------------------------------------
 
@@ -583,12 +708,19 @@ def _flush_once(hook_input_path: Path, reason: str, state_dir: Path, vault_root:
         except OSError:
             _write_flush_state(state_dir, session_id, now_epoch, "fail", "daily-append-failed")
             write_health(state_dir, "daily-append-failed")
+            return
+
+        try:
+            maybe_trigger_compile(vault_root, event_time)
+        except (OSError, ValueError, json.JSONDecodeError):
+            write_health(state_dir, "compile-trigger-failed")
 
 
 def _parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--hook-input", type=Path, required=True)
-    parser.add_argument("--reason", choices=("sessionend", "precompact"), required=True)
+    parser.add_argument("--hook-input", type=Path)
+    parser.add_argument("--reason", choices=("sessionend", "precompact"), default="sessionend")
+    parser.add_argument("--maybe-compile", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
@@ -600,6 +732,23 @@ def main(argv=None) -> int:
 
     state_dir = _common.state_dir()
     vault_root = _common.vault_root()
+
+    if args.maybe_compile:
+        # The off-hours catch-up path: hooks.py spawns this detached from
+        # SessionStart, with no hook payload of its own, purely to give an
+        # earlier, already-finished day's log a chance to compile even though
+        # its SessionEnd never reached the 18:00 evening path.
+        try:
+            maybe_trigger_compile(vault_root, catch_up=True)
+        except (OSError, ValueError, json.JSONDecodeError):
+            write_health(state_dir, "compile-catchup-failed")
+        except Exception as exc:  # noqa: BLE001 - hook boundary: never fail a session start
+            write_health(state_dir, "unexpected:{}".format(exc.__class__.__name__))
+        return 0
+
+    if args.hook_input is None:
+        return 0
+
     managed_input = _managed_hook_input(args.hook_input, state_dir)
     try:
         event_time = dt.datetime.now().astimezone()

@@ -26,6 +26,8 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
 - `daily/` - machine-written session log, one file per day; read it, never hand-edit it (see below)
+- `knowledge/` - machine-written knowledge base, compiled from `daily/`; read it, never hand-edit
+  it (see below). `🧠 500-Knowledge/` stays the human-written counterpart.
 <!-- SETUP: add lines for any optional scope folders you created (Goals, Vault, Body, Mind). -->
 
 ## Conventions
@@ -82,6 +84,13 @@ file. If the summarizer cannot run, it falls back to the raw transcript slice un
 so, so a session is never silently lost. Read it when you need what happened in a session you were
 not part of, but never hand-edit it, it is the raw material a future knowledge-base compile will
 read from.
+
+## Knowledge base
+`knowledge/` (`index.md`, `log.md`, `concepts/`, `connections/`) is machine-written too, compiled
+from `daily/` by an evening pass on `sonnet`, described at `.claude/hooks/compile.py`. Read it for
+durable, cross-session concepts and how they connect; never hand-edit it, the same way you never
+hand-edit `daily/`. `🧠 500-Knowledge/` remains yours: what you write there by hand about a domain
+is a separate, human-curated layer next to this machine-compiled one, not a duplicate of it.
 
 ## Backups
 The vault is a git repo. `.claude/backup.sh` commits and pushes anything that changed; the

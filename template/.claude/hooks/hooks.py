@@ -19,6 +19,7 @@ from _common import (  # noqa: E402
     read_hook_input,
     session_key,
     state_dir,
+    vault_root,
 )
 import portalock  # noqa: E402
 
@@ -99,6 +100,32 @@ def _read_file(path):
         return ""
 
 
+def _spawn_catchup_compile():
+    """Fire the off-hours catch-up compile, detached, and never wait on it.
+
+    session-start.sh did this at its tail in the shell-based engine: an
+    earlier day's log can finish (SessionEnd closes it) without ever passing
+    through the 18:00 evening path, so a catch-up chance is needed somewhere
+    that runs on every session start regardless of the hour. Detached and
+    fire-and-forget, because SessionStart has a 15 second budget and
+    flush.py decides internally whether anything is even due; a session with
+    nothing to catch up on returns almost immediately, but this call must add
+    nothing measurable to the hook either way.
+    """
+    flush_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flush.py")
+    try:
+        subprocess.Popen(
+            [sys.executable, flush_script, "--maybe-compile"],
+            cwd=str(vault_root()),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **portalock.detached_kwargs()
+        )
+    except OSError:
+        pass
+
+
 def cmd_session_start(argv):
     payload = read_hook_input()
     key = session_key(payload.get("session_id"))
@@ -165,6 +192,7 @@ def cmd_session_start(argv):
     ctx += "[Memory] Identity: {{COMPANION}}, {{USER_NAME}}'s thinking partner. Continuity is your job."
 
     emit_context("SessionStart", ctx)
+    _spawn_catchup_compile()
 
 
 def cmd_prompt_counter(argv):

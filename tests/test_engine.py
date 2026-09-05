@@ -2,6 +2,7 @@ import sys
 
 sys.dont_write_bytecode = True
 
+import datetime as dt
 import importlib
 import io
 import json
@@ -21,6 +22,7 @@ import _common  # noqa: E402
 import hooks  # noqa: E402
 import flush  # noqa: E402
 import portalock  # noqa: E402
+import compile  # noqa: E402
 
 
 def reload_modules():
@@ -617,6 +619,563 @@ class TestDirectiveShapedScan(FlushTestCase):
     def test_no_warning_on_ordinary_content(self):
         self.run_flush("ordinary-session", self.five_turns())
         self.assertNotIn("warn:directive-shaped-content", self.health().get("warnings", []))
+
+
+# =============================================================================
+# Phase 4: compile.py, the cage around the unattended write-capable model call
+# =============================================================================
+
+
+def _mocked_model_run(mutate=None, returncode=0, stdout=""):
+    """A `compile.subprocess.run` stand-in that runs `mutate(stage)` (the
+    simulated model edits) before returning a clean CompletedProcess.
+    """
+
+    def run(argv, **kwargs):
+        stage = Path(kwargs["cwd"])
+        if mutate is not None:
+            mutate(stage)
+        return subprocess.CompletedProcess(args=argv, returncode=returncode, stdout=stdout, stderr="")
+
+    return run
+
+
+class CompileTestCase(VaultTestCase):
+    """VaultTestCase plus a seeded knowledge/ tree and compile.py helpers."""
+
+    def setUp(self):
+        super().setUp()
+        (self.vault / "knowledge" / "concepts").mkdir(parents=True)
+        (self.vault / "knowledge" / "connections").mkdir(parents=True)
+        (self.vault / "knowledge" / "index.md").write_text("# Index\n", encoding="utf-8")
+        (self.vault / "knowledge" / "log.md").write_text("# Log\n", encoding="utf-8")
+        (self.vault / "daily").mkdir(parents=True, exist_ok=True)
+
+    def write_daily(self, name, content="Some session content.\n"):
+        path = self.vault / "daily" / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def state(self):
+        path = _common.state_dir() / "compile-state.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def health(self):
+        path = _common.state_dir() / "health.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def run_compile(self, argv=None, mutate=None, returncode=0, stdout=""):
+        argv = argv if argv is not None else ["--max-calls", "1"]
+        run_fn = _mocked_model_run(mutate=mutate, returncode=returncode, stdout=stdout)
+        with mock.patch("compile.shutil.which", return_value="claude"):
+            with mock.patch("compile.subprocess.run", side_effect=run_fn) as run_mock:
+                result = compile.main(argv)
+        return result, run_mock
+
+    def snapshot_vault(self):
+        """A {relative_path: bytes} snapshot of every file in the vault, minus
+        `.claude/` (where compile.py's own state and health files live and are
+        expected to change on every run, success or failure).
+        """
+        snapshot = {}
+        for path in sorted(self.vault.rglob("*")):
+            if path.is_file() and ".claude" not in path.relative_to(self.vault).parts:
+                snapshot[str(path.relative_to(self.vault))] = path.read_bytes()
+        return snapshot
+
+
+class TestValidateManifestDiff(unittest.TestCase):
+    """Direct unit tests on the allow-list boundary, independent of the stage
+    or the model call: a manifest diff either passes only allow-listed
+    changes, or it raises.
+    """
+
+    def test_deletion_rejected(self):
+        before = {"knowledge/concepts/a.md": ("file", "aaa")}
+        after = {}
+        with self.assertRaises(compile.PolicyError):
+            compile._validate_manifest_diff(before, after)
+
+    def test_new_top_level_file_rejected(self):
+        with self.assertRaises(compile.PolicyError):
+            compile._validate_manifest_diff({}, {"escape.md": ("file", "xxx")})
+
+    def test_leading_dotdot_relative_path_rejected(self):
+        with self.assertRaises(compile.PolicyError):
+            compile._validate_manifest_diff({}, {"../escape.md": ("file", "xxx")})
+
+    def test_non_markdown_settings_path_rejected(self):
+        with self.assertRaises(compile.PolicyError):
+            compile._validate_manifest_diff({}, {".claude/settings.json": ("file", "xxx")})
+
+    def test_path_inside_knowledge_but_not_concepts_or_connections_rejected(self):
+        with self.assertRaises(compile.PolicyError):
+            compile._validate_manifest_diff({}, {"knowledge/random.md": ("file", "xxx")})
+
+    def test_file_to_directory_type_change_rejected(self):
+        before = {"knowledge/concepts/a.md": ("file", "aaa")}
+        after = {"knowledge/concepts/a.md": ("dir", "")}
+        with self.assertRaises(compile.PolicyError):
+            compile._validate_manifest_diff(before, after)
+
+    def test_no_allowlisted_changes_raises_no_changes_error(self):
+        before = {"knowledge/index.md": ("file", "aaa")}
+        after = dict(before)
+        with self.assertRaises(compile.NoChangesError):
+            compile._validate_manifest_diff(before, after)
+
+    def test_valid_diff_returns_sorted_changed_files(self):
+        before = {"knowledge/index.md": ("file", "aaa")}
+        after = {
+            "knowledge/index.md": ("file", "bbb"),
+            "knowledge/concepts": ("dir", ""),
+            "knowledge/concepts/a.md": ("file", "ccc"),
+        }
+        changed = compile._validate_manifest_diff(before, after)
+        self.assertEqual(changed, ["knowledge/concepts/a.md", "knowledge/index.md"])
+
+    def test_is_allowed_output_file_rejects_leading_dotdot(self):
+        self.assertFalse(compile._is_allowed_output_file("../escape.md"))
+
+
+class TestManifestSymlinkRejection(unittest.TestCase):
+    """A file replaced by a symlink is caught while building the manifest
+    itself, before _validate_manifest_diff ever sees it, since a symlink
+    entry is never recorded as a comparable type.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.stage = Path(self._tmp.name)
+        (self.stage / "knowledge" / "concepts").mkdir(parents=True)
+        (self.stage / "knowledge" / "concepts" / "a.md").write_text("hello", encoding="utf-8")
+        self._outside_tmp = tempfile.TemporaryDirectory()
+        self.outside = Path(self._outside_tmp.name) / "outside.md"
+        self.outside.write_text("evil", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+        self._outside_tmp.cleanup()
+
+    def _require_symlinks(self):
+        probe = Path(self._outside_tmp.name) / "probe-link"
+        try:
+            os.symlink(str(self.outside), str(probe))
+        except OSError:
+            self.skipTest("symlinks not permitted for this user/platform")
+        else:
+            probe.unlink()
+
+    def test_file_replaced_with_symlink_rejected_by_manifest(self):
+        self._require_symlinks()
+        target = self.stage / "knowledge" / "concepts" / "a.md"
+        target.unlink()
+        os.symlink(str(self.outside), str(target))
+        with self.assertRaises(compile.PolicyError):
+            compile._manifest(self.stage)
+
+    def test_symlinked_directory_rejected_by_manifest(self):
+        self._require_symlinks()
+        evil_dir = self.stage / "knowledge" / "concepts" / "evil"
+        os.symlink(str(Path(self._outside_tmp.name)), str(evil_dir), target_is_directory=True)
+        with self.assertRaises(compile.PolicyError):
+            compile._manifest(self.stage)
+
+
+class TestCageDeletion(CompileTestCase):
+    def test_deleted_allowlisted_file_rejected_and_nothing_promoted(self):
+        concept = self.vault / "knowledge" / "concepts" / "existing.md"
+        concept.write_text("original content\n", encoding="utf-8")
+        self.write_daily("2026-01-01.md")
+        before = self.snapshot_vault()
+
+        def mutate(stage):
+            (stage / "knowledge" / "concepts" / "existing.md").unlink()
+
+        self.run_compile(mutate=mutate)
+
+        self.assertEqual(self.state()["last_status"], "fail:policy")
+        self.assertEqual(before, self.snapshot_vault())
+
+
+class TestCageOutsideAllowlist(CompileTestCase):
+    def test_new_top_level_file_rejected(self):
+        self.write_daily("2026-01-02.md")
+        before = self.snapshot_vault()
+
+        def mutate(stage):
+            (stage / "escape.md").write_text("evil\n", encoding="utf-8")
+
+        self.run_compile(mutate=mutate)
+        self.assertEqual(self.state()["last_status"], "fail:policy")
+        self.assertEqual(before, self.snapshot_vault())
+
+    def test_dot_claude_settings_json_rejected(self):
+        self.write_daily("2026-01-03.md")
+        before = self.snapshot_vault()
+
+        def mutate(stage):
+            claude_dir = stage / ".claude"
+            claude_dir.mkdir()
+            (claude_dir / "settings.json").write_text("{}", encoding="utf-8")
+
+        self.run_compile(mutate=mutate)
+        self.assertEqual(self.state()["last_status"], "fail:policy")
+        self.assertEqual(before, self.snapshot_vault())
+
+
+class TestCageTypeChange(CompileTestCase):
+    def test_file_replaced_with_directory_rejected(self):
+        concept = self.vault / "knowledge" / "concepts" / "existing.md"
+        concept.write_text("original\n", encoding="utf-8")
+        self.write_daily("2026-01-04.md")
+        before = self.snapshot_vault()
+
+        def mutate(stage):
+            target = stage / "knowledge" / "concepts" / "existing.md"
+            target.unlink()
+            target.mkdir()
+
+        self.run_compile(mutate=mutate)
+        self.assertEqual(self.state()["last_status"], "fail:policy")
+        self.assertEqual(before, self.snapshot_vault())
+
+    def test_file_replaced_with_symlink_rejected(self):
+        concept = self.vault / "knowledge" / "concepts" / "existing.md"
+        concept.write_text("original\n", encoding="utf-8")
+        self.write_daily("2026-01-05.md")
+
+        outside_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(outside_tmp.cleanup)
+        outside = Path(outside_tmp.name) / "outside.md"
+        outside.write_text("evil\n", encoding="utf-8")
+        probe = Path(outside_tmp.name) / "probe-link"
+        try:
+            os.symlink(str(outside), str(probe))
+        except OSError:
+            self.skipTest("symlinks not permitted for this user/platform")
+        else:
+            probe.unlink()
+
+        before = self.snapshot_vault()
+
+        def mutate(stage):
+            target = stage / "knowledge" / "concepts" / "existing.md"
+            target.unlink()
+            os.symlink(str(outside), str(target))
+
+        self.run_compile(mutate=mutate)
+        self.assertEqual(self.state()["last_status"], "fail:policy")
+        self.assertEqual(before, self.snapshot_vault())
+
+
+class TestCagePromotion(CompileTestCase):
+    def test_valid_diff_promoted_and_live_file_matches(self):
+        self.write_daily("2026-01-06.md", "Learned something about foo.\n")
+        new_content = "# Foo\n\nFoo is a thing.\n"
+
+        def mutate(stage):
+            (stage / "knowledge" / "concepts" / "foo.md").write_text(new_content, encoding="utf-8")
+            (stage / "knowledge" / "index.md").write_text("# Index\n\n| Foo | ... |\n", encoding="utf-8")
+
+        result, run_mock = self.run_compile(mutate=mutate)
+        self.assertEqual(result, 0)
+        run_mock.assert_called_once()
+
+        live_concept = self.vault / "knowledge" / "concepts" / "foo.md"
+        self.assertTrue(live_concept.exists())
+        self.assertEqual(live_concept.read_text(encoding="utf-8"), new_content)
+
+        state = self.state()
+        self.assertEqual(state["last_status"], "ok")
+        self.assertIn("2026-01-06.md", state["ingested"])
+        self.assertEqual(self.health()["error"], "ok")
+
+
+class TestConcurrentEditGuard(CompileTestCase):
+    def test_promotion_refused_when_live_file_changed_after_baseline(self):
+        self.write_daily("2026-01-07.md", "Some content.\n")
+        concurrent_content = "# Index\n\nEdited by the user while compile ran.\n"
+
+        def mutate(stage):
+            # The simulated model output ...
+            (stage / "knowledge" / "index.md").write_text("# Index\n\nModel wrote this.\n", encoding="utf-8")
+            # ... racing a direct edit to the *live* file, made after the
+            # baseline snapshot (taken before this call) but before promotion
+            # (which happens after this call returns).
+            (self.vault / "knowledge" / "index.md").write_text(concurrent_content, encoding="utf-8")
+
+        self.run_compile(mutate=mutate)
+
+        state = self.state()
+        self.assertEqual(state["last_status"], "fail:policy")
+        live_index = (self.vault / "knowledge" / "index.md").read_text(encoding="utf-8")
+        self.assertEqual(live_index, concurrent_content)
+
+
+class TestNoChangesErrorCompile(CompileTestCase):
+    def test_model_writing_nothing_recorded_as_no_changes(self):
+        self.write_daily("2026-01-08.md")
+
+        def mutate(_stage):
+            pass
+
+        self.run_compile(mutate=mutate)
+        self.assertEqual(self.state()["last_status"], "fail:no-changes")
+
+
+class TestChangedDailyLogs(VaultTestCase):
+    def test_selects_only_files_whose_digest_differs(self):
+        daily_dir = self.vault / "daily"
+        daily_dir.mkdir(parents=True, exist_ok=True)
+        paths = []
+        for i in range(1, 5):
+            path = daily_dir / "2026-01-0{}.md".format(i)
+            path.write_text("content {}".format(i), encoding="utf-8")
+            paths.append(path)
+
+        ingested = {paths[0].name: compile._sha256(paths[0])}
+        changed = compile.changed_daily_logs(self.vault, ingested)
+        changed_names = [p.name for p, _digest in changed]
+
+        self.assertNotIn(paths[0].name, changed_names)
+        for path in paths[1:]:
+            self.assertIn(path.name, changed_names)
+
+
+class TestMaxCallsRespected(CompileTestCase):
+    def test_only_max_calls_files_compiled_in_one_run(self):
+        self.write_daily("2026-01-01.md", "one")
+        self.write_daily("2026-01-02.md", "two")
+        self.write_daily("2026-01-03.md", "three")
+
+        def mutate(stage):
+            index_path = stage / "knowledge" / "index.md"
+            index_path.write_text(index_path.read_text(encoding="utf-8") + "x", encoding="utf-8")
+
+        self.run_compile(argv=["--max-calls", "2"], mutate=mutate)
+        state = self.state()
+        self.assertEqual(len(state["ingested"]), 2)
+
+
+class TestCompileLock(CompileTestCase):
+    def test_second_compile_while_locked_exits_without_running(self):
+        self.write_daily("2026-01-09.md")
+        state_dir = _common.state_dir()
+        lock_path = state_dir / "compile.lock"
+        with lock_path.open("a+", encoding="utf-8") as lock_handle:
+            with portalock.exclusive(lock_handle, blocking=False) as held:
+                self.assertTrue(held)
+                with mock.patch("compile.subprocess.run") as run_mock:
+                    result = compile.main(["--max-calls", "1"])
+                self.assertEqual(result, 0)
+                run_mock.assert_not_called()
+
+
+class TestCompileStateRunsCap(unittest.TestCase):
+    def test_save_state_caps_runs_at_twenty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "compile-state.json"
+            state = compile._default_state()
+            for i in range(25):
+                compile._append_run(state, "ts-{}".format(i), "daily-{}.md".format(i), "ok")
+            compile._save_state(path, state)
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(len(loaded["runs"]), 20)
+            self.assertEqual(loaded["runs"][-1]["daily_file"], "daily-24.md")
+
+
+class TestCompileHealthJson(CompileTestCase):
+    def test_written_ok_when_nothing_changed(self):
+        result, run_mock = self.run_compile(mutate=None)
+        self.assertEqual(result, 0)
+        run_mock.assert_not_called()
+        self.assertEqual(self.health()["error"], "ok")
+
+    def test_written_on_policy_failure(self):
+        concept = self.vault / "knowledge" / "concepts" / "x.md"
+        concept.write_text("orig\n", encoding="utf-8")
+        self.write_daily("2026-02-01.md")
+
+        def mutate(stage):
+            (stage / "knowledge" / "concepts" / "x.md").unlink()
+
+        self.run_compile(mutate=mutate)
+        self.assertIn("deletion:", self.health()["error"])
+
+    def test_written_on_claude_cli_missing(self):
+        self.write_daily("2026-02-02.md")
+        with mock.patch("compile.shutil.which", return_value=None):
+            compile.main(["--max-calls", "1"])
+        self.assertEqual(self.health()["error"], "claude-cli-missing")
+
+    def test_written_on_no_changes(self):
+        self.write_daily("2026-02-03.md")
+
+        def mutate(_stage):
+            pass
+
+        self.run_compile(mutate=mutate)
+        self.assertEqual(self.health()["error"], "no-allowed-file-changes")
+
+    def test_written_on_success(self):
+        self.write_daily("2026-02-04.md")
+
+        def mutate(stage):
+            (stage / "knowledge" / "index.md").write_text("updated\n", encoding="utf-8")
+
+        self.run_compile(mutate=mutate)
+        self.assertEqual(self.health()["error"], "ok")
+
+
+class TestBuildCompilePrompt(unittest.TestCase):
+    def test_contains_language_placeholder_and_untrusted_delimiters(self):
+        prompt = compile.build_compile_prompt("index text", "2026-01-01.md", "daily body", "2026-01-01T00:00:00")
+        self.assertIn("{{LANGUAGE}}", prompt)
+        self.assertIn("BEGIN UNTRUSTED INDEX DATA", prompt)
+        self.assertIn("END UNTRUSTED INDEX DATA", prompt)
+        self.assertIn("BEGIN UNTRUSTED DAILY DATA", prompt)
+        self.assertIn("END UNTRUSTED DAILY DATA", prompt)
+        self.assertIn("daily body", prompt)
+
+
+# =============================================================================
+# Phase 4: maybe_trigger_compile in flush.py
+# =============================================================================
+
+
+class TestMaybeTriggerCompile(VaultTestCase):
+    def _write_daily(self, name, content="content"):
+        daily_dir = self.vault / "daily"
+        daily_dir.mkdir(parents=True, exist_ok=True)
+        path = daily_dir / name
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_fires_at_hour_18(self):
+        self._write_daily("2026-01-01.md")
+        now = dt.datetime(2026, 1, 1, 18, 0, tzinfo=dt.timezone.utc)
+        calls = []
+
+        def fake_popen(argv, **kwargs):
+            calls.append(argv)
+            return mock.Mock()
+
+        fired = flush.maybe_trigger_compile(self.vault, now, popen_factory=fake_popen)
+        self.assertTrue(fired)
+        self.assertEqual(len(calls), 1)
+
+    def test_does_not_fire_at_hour_17_off_schedule(self):
+        self._write_daily("2026-01-01.md")
+        now = dt.datetime(2026, 1, 1, 17, 0, tzinfo=dt.timezone.utc)
+        calls = []
+
+        fired = flush.maybe_trigger_compile(self.vault, now, popen_factory=lambda *a, **k: calls.append(a))
+        self.assertFalse(fired)
+        self.assertEqual(calls, [])
+
+    def test_offhours_catchup_picks_earlier_finished_day(self):
+        self._write_daily("2026-01-01.md", "earlier day")
+        self._write_daily("2026-01-02.md", "today")
+        now = dt.datetime(2026, 1, 2, 10, 0, tzinfo=dt.timezone.utc)
+        calls = []
+
+        def fake_popen(argv, **kwargs):
+            calls.append(argv)
+            return mock.Mock()
+
+        fired = flush.maybe_trigger_compile(self.vault, now, popen_factory=fake_popen, catch_up=True)
+        self.assertTrue(fired)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--before-date", calls[0])
+        self.assertIn("2026-01-02", calls[0])
+
+    def test_offhours_catchup_never_fires_for_today_alone(self):
+        self._write_daily("2026-01-02.md", "today only")
+        now = dt.datetime(2026, 1, 2, 10, 0, tzinfo=dt.timezone.utc)
+        calls = []
+
+        fired = flush.maybe_trigger_compile(
+            self.vault, now, popen_factory=lambda *a, **k: calls.append(a), catch_up=True
+        )
+        self.assertFalse(fired)
+        self.assertEqual(calls, [])
+
+    def test_o_excl_claim_means_two_calls_produce_one_spawn(self):
+        self._write_daily("2026-01-01.md")
+        now = dt.datetime(2026, 1, 1, 18, 0, tzinfo=dt.timezone.utc)
+        calls = []
+
+        def fake_popen(argv, **kwargs):
+            calls.append(argv)
+            return mock.Mock()
+
+        first = flush.maybe_trigger_compile(self.vault, now, popen_factory=fake_popen)
+        second = flush.maybe_trigger_compile(self.vault, now, popen_factory=fake_popen)
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.assertEqual(len(calls), 1)
+
+    def test_fake_hour_env_override_out_of_range_raises(self):
+        self._write_daily("2026-01-01.md")
+        now = dt.datetime(2026, 1, 1, 12, 0, tzinfo=dt.timezone.utc)
+        old = os.environ.get("AETHROM_FAKE_HOUR")
+        os.environ["AETHROM_FAKE_HOUR"] = "24"
+        try:
+            with self.assertRaises(ValueError):
+                flush.maybe_trigger_compile(self.vault, now)
+        finally:
+            if old is None:
+                os.environ.pop("AETHROM_FAKE_HOUR", None)
+            else:
+                os.environ["AETHROM_FAKE_HOUR"] = old
+
+
+class TestControlPlaneGuard(CompileTestCase):
+    """The manifest diff only sees the stage. These cover the write that never
+    goes through the stage at all, straight into the vault's control plane.
+    """
+
+    def test_write_into_dot_claude_during_the_call_fails_closed(self):
+        self.write_daily("2026-01-08.md", "Some content.\n")
+        settings = self.vault / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text('{"hooks": {}}', encoding="utf-8")
+
+        def mutate(stage):
+            # Plausible work in the stage ...
+            (stage / "knowledge" / "concepts" / "ok.md").write_text("# Ok\n\nReal.\n", encoding="utf-8")
+            # ... while something writes the control plane behind the cage's back.
+            settings.write_text('{"hooks": {}, "pwned": true}', encoding="utf-8")
+
+        self.run_compile(mutate=mutate)
+
+        state = self.state()
+        self.assertEqual(state["last_status"], "fail:policy")
+        self.assertEqual(self.health()["error"], "control-plane-changed")
+        # The legitimate-looking article is not promoted either: the run fails
+        # as a whole rather than keeping the half it liked.
+        self.assertFalse((self.vault / "knowledge" / "concepts" / "ok.md").exists())
+        self.assertNotIn("2026-01-08.md", state.get("ingested", {}))
+
+    def test_state_directory_writes_do_not_trip_the_guard(self):
+        """A flush running concurrently writes into .claude/hooks/.state, which
+        must not be mistaken for tampering or every evening compile fails.
+        """
+        self.write_daily("2026-01-09.md", "Some content.\n")
+
+        def mutate(stage):
+            (stage / "knowledge" / "concepts" / "ok.md").write_text("# Ok\n\nReal.\n", encoding="utf-8")
+            (_common.state_dir() / "last-flush.json").write_text('{"ts": 1}', encoding="utf-8")
+
+        self.run_compile(mutate=mutate)
+
+        self.assertEqual(self.state()["last_status"], "ok")
+        self.assertTrue((self.vault / "knowledge" / "concepts" / "ok.md").exists())
 
 
 if __name__ == "__main__":

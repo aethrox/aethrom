@@ -144,6 +144,12 @@ Claude Code is already installed, the user is running you. Do not reinstall it.
 ├── 🔮 850-{{COMPANION}}/      # the companion's persistent memory
 ├── 📦 900-Archive/            # done and parked
 ├── 📋 Templates/
+├── daily/                      # machine-written session log, one file per day
+├── knowledge/                  # machine-written knowledge base, compiled from daily/
+│   ├── index.md
+│   ├── log.md
+│   ├── concepts/
+│   └── connections/
 └── .claude/
     └── hooks/
         └── .state/
@@ -330,6 +336,50 @@ compaction boundary. This is machine-written output: never hand-edit `daily/`, o
 `template/.claude/hooks/flush.py` in the repo for the full source; write it by copying that file
 rather than retyping it here.
 
+### The evening compile
+
+`flush.py` also calls `maybe_trigger_compile` right after a successful daily-log append, and
+`hooks.py`'s `session-start` fires the same check again, detached, at every session start. At or
+after 18:00 local time, or as an off-hours catch-up for an earlier day whose log is already
+closed (never today's still-open one), it spawns `.claude/hooks/compile.py` detached. That script
+turns changed `daily/*.md` files into `{{VAULT_PATH}}/knowledge/` articles (`index.md`, `log.md`,
+`concepts/*.md`, `connections/*.md`) by running `claude -p --model sonnet --permission-mode
+acceptEdits` against an isolated staging copy held outside the vault, in the system temp
+directory, never under `.claude/`. This is the one part of the engine that runs unattended with
+write tools for up to fifteen minutes, so it is fenced by a strict before/after file manifest diff:
+anything the model touches outside `knowledge/index.md`, `knowledge/log.md`,
+`knowledge/concepts/**/*.md` and `knowledge/connections/**/*.md` is rejected before it ever reaches
+the live vault, and nothing is promoted if a live file changed underneath the compile while it ran.
+This is machine-written output like `daily/`: never hand-edit `knowledge/`, only read it. See
+`template/.claude/hooks/compile.py` and `docs/COMPILE-SECURITY.md` in the repo for the full source
+and the full threat model; write `compile.py` by copying that file rather than retyping it here.
+
+Write the two knowledge seed files so the compiler has somewhere to write into:
+
+**`{{VAULT_PATH}}/knowledge/index.md`**
+```markdown
+# Knowledge Base Index
+
+This file is machine-written: the compiler (`.claude/hooks/compile.py`) updates it every
+evening. You can edit it by hand too; the compiler updates rows in place and never deletes the
+table. Every row corresponds to one article under `knowledge/concepts/`.
+
+| Article | Summary | Source | Updated |
+| --- | --- | --- | --- |
+```
+
+**`{{VAULT_PATH}}/knowledge/log.md`**
+```markdown
+# Compile Log
+
+Every time the compiler runs it appends one block to the end of this file: which daily log was
+processed, which articles were created or updated, and a short note.
+```
+
+Then create `{{VAULT_PATH}}/knowledge/concepts/.gitkeep` and
+`{{VAULT_PATH}}/knowledge/connections/.gitkeep` (both empty), and write
+`{{VAULT_PATH}}/.aethrom-version` containing exactly `1.0.0` and a trailing newline.
+
 ---
 
 ## PHASE 6 - Write `AGENTS.md` and `CLAUDE.md`
@@ -367,6 +417,9 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal)
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
+- `daily/` - machine-written session log, one file per day; read it, never hand-edit it
+- `knowledge/` - machine-written knowledge base, compiled from `daily/`; read it, never hand-edit
+  it. `🧠 500-Knowledge/` stays the human-written counterpart.
 <!-- SETUP: add lines for any optional scope folders you created (Goals, Vault, Body, Mind). -->
 
 ## Conventions
@@ -415,6 +468,13 @@ The files above are the source of truth. On top of them sits a searchable index,
 - Add only durable facts - decisions, preferences, commitments. Not session chatter.
 - It calls a remote API, so it can be slow or offline. If it fails, carry on with the vault
   files; never block a reply on it.
+
+## Knowledge base
+`knowledge/` (`index.md`, `log.md`, `concepts/`, `connections/`) is machine-written too, compiled
+from `daily/` by an evening pass on `sonnet`, described at `.claude/hooks/compile.py`. Read it for
+durable, cross-session concepts and how they connect; never hand-edit it, the same way you never
+hand-edit `daily/`. `🧠 500-Knowledge/` remains yours: what you write there by hand about a domain
+is a separate, human-curated layer next to this machine-compiled one, not a duplicate of it.
 
 ## Backups
 The vault is a git repo. `.claude/backup.sh` commits and pushes anything that changed; the
