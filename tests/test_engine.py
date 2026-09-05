@@ -18,6 +18,8 @@ _sys.path.insert(0, str(HOOKS_DIR))
 
 import _common  # noqa: E402
 import hooks  # noqa: E402
+import flush  # noqa: E402
+import portalock  # noqa: E402
 
 
 def reload_modules():
@@ -222,6 +224,215 @@ class TestVaultRoot(unittest.TestCase):
         reload_modules()
         expected = Path(_common.__file__).resolve().parent.parent.parent
         self.assertEqual(_common.vault_root(), expected)
+
+
+def _write_transcript(path, turns):
+    """Write a minimal Claude Code JSONL transcript from (role, text) tuples."""
+    with open(path, "w", encoding="utf-8") as handle:
+        for role, text in turns:
+            handle.write(json.dumps({"message": {"role": role, "content": text}}) + "\n")
+
+
+def _write_hook_input(path, session_id, transcript_path):
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"session_id": session_id, "transcript_path": str(transcript_path)}, handle)
+
+
+class FlushTestCase(VaultTestCase):
+    """VaultTestCase plus helpers to drive flush.py end to end."""
+
+    def run_flush(self, session_id, turns, reason="sessionend", hook_input_name="hookin-test.json"):
+        transcript_path = self.vault / "transcript.jsonl"
+        _write_transcript(transcript_path, turns)
+        hook_input_path = _common.state_dir() / hook_input_name
+        _write_hook_input(hook_input_path, session_id, transcript_path)
+        flush.main(["--hook-input", str(hook_input_path), "--reason", reason])
+        return hook_input_path
+
+    def daily_path(self):
+        date_text = time.strftime("%Y-%m-%d")
+        return self.vault / "daily" / "{}.md".format(date_text)
+
+    def five_turns(self):
+        return [
+            ("user", "hello {}".format(i)) if i % 2 == 0 else ("assistant", "reply {}".format(i))
+            for i in range(5)
+        ]
+
+
+class TestFormatTurns(unittest.TestCase):
+    def test_keeps_last_turns_only(self):
+        turns = [("user", "t{}".format(i)) for i in range(40)]
+        rendered, count = flush.format_turns(turns, max_turns=30, max_chars=100_000)
+        self.assertEqual(count, 30)
+        self.assertNotIn("t0\n", rendered)
+        self.assertIn("t39", rendered)
+
+    def test_respects_character_cap(self):
+        turns = [("user", "x" * 1000) for _ in range(20)]
+        rendered, _count = flush.format_turns(turns, max_turns=30, max_chars=5_000)
+        self.assertLessEqual(len(rendered), 5_000)
+
+    def test_cuts_on_turn_boundary_not_mid_turn(self):
+        turns = [("user", "a" * 100), ("assistant", "b" * 100), ("user", "c" * 100)]
+        rendered, _count = flush.format_turns(turns, max_turns=30, max_chars=120)
+        self.assertTrue(rendered.startswith("**"))
+        # A mid-turn cut would start with a fragment of "b"*100 or "c"*100, not
+        # the "**Role:**" prefix of a fresh turn.
+        self.assertRegex(rendered, r"^\*\*(User|Assistant):\*\* ")
+
+
+class TestTextFromContent(unittest.TestCase):
+    def test_bare_string(self):
+        self.assertEqual(flush._text_from_content("hello"), "hello")
+
+    def test_list_of_text_blocks(self):
+        content = [{"type": "text", "text": "one"}, {"type": "tool_use"}, {"type": "text", "text": "two"}]
+        self.assertEqual(flush._text_from_content(content), "one\ntwo")
+
+    def test_non_text_returns_empty(self):
+        self.assertEqual(flush._text_from_content(42), "")
+        self.assertEqual(flush._text_from_content(None), "")
+
+
+class TestReadTranscript(FlushTestCase):
+    def test_skips_unparseable_lines_but_counts_them(self):
+        path = self.vault / "t.jsonl"
+        with open(path, "w", encoding="utf-8") as handle:
+            # 1 broken line out of 4 non-empty lines sits exactly at the
+            # quarter threshold, which the spec requires to stay undegraded:
+            # only *more* than a quarter of failures should trip the flag.
+            handle.write(json.dumps({"message": {"role": "user", "content": "ok"}}) + "\n")
+            handle.write(json.dumps({"message": {"role": "assistant", "content": "ok2"}}) + "\n")
+            handle.write(json.dumps({"message": {"role": "user", "content": "ok3"}}) + "\n")
+            handle.write("not json at all\n")
+        turns, degraded = flush.read_transcript(path)
+        self.assertEqual(turns, [("user", "ok"), ("assistant", "ok2"), ("user", "ok3")])
+        self.assertFalse(degraded)
+
+    def test_flags_degraded_past_quarter_threshold(self):
+        path = self.vault / "t2.jsonl"
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"message": {"role": "user", "content": "ok"}}) + "\n")
+            for _ in range(3):
+                handle.write("broken\n")
+        turns, degraded = flush.read_transcript(path)
+        self.assertEqual(turns, [("user", "ok")])
+        self.assertTrue(degraded)
+
+
+class TestMinimumTurns(FlushTestCase):
+    def test_sessionend_writes_with_one_turn(self):
+        self.run_flush("s1", [("user", "hi")], reason="sessionend")
+        self.assertTrue(self.daily_path().exists())
+
+    def test_precompact_needs_five_turns(self):
+        self.run_flush("s2", [("user", "hi"), ("assistant", "yo")], reason="precompact")
+        self.assertFalse(self.daily_path().exists())
+
+    def test_precompact_writes_with_five_turns(self):
+        self.run_flush("s3", self.five_turns(), reason="precompact")
+        self.assertTrue(self.daily_path().exists())
+
+
+class TestDailyFileCreation(FlushTestCase):
+    def test_creates_skeleton_when_absent(self):
+        self.run_flush("s4", self.five_turns())
+        content = self.daily_path().read_text(encoding="utf-8")
+        self.assertTrue(content.startswith("# Daily Log: "))
+        self.assertIn("## Sessions", content)
+
+    def test_appends_when_present(self):
+        self.run_flush("s5", self.five_turns())
+        first_len = len(self.daily_path().read_text(encoding="utf-8"))
+        self.run_flush("s6", self.five_turns())
+        second_len = len(self.daily_path().read_text(encoding="utf-8"))
+        self.assertGreater(second_len, first_len)
+
+
+class TestPrecompactHeading(FlushTestCase):
+    def test_precompact_heading_differs_from_sessionend(self):
+        self.run_flush("s7", self.five_turns(), reason="sessionend")
+        sessionend_content = self.daily_path().read_text(encoding="utf-8")
+        self.run_flush("s8", self.five_turns(), reason="precompact")
+        combined = self.daily_path().read_text(encoding="utf-8")
+        precompact_addition = combined[len(sessionend_content) :]
+        self.assertNotIn("before compaction", sessionend_content)
+        self.assertIn("before compaction", precompact_addition)
+
+
+class TestDeduplication(FlushTestCase):
+    def test_two_runs_within_window_append_once(self):
+        self.run_flush("dup-session", self.five_turns())
+        content_after_first = self.daily_path().read_text(encoding="utf-8")
+        self.run_flush("dup-session", self.five_turns(), hook_input_name="hookin-second.json")
+        content_after_second = self.daily_path().read_text(encoding="utf-8")
+        self.assertEqual(content_after_first, content_after_second)
+        self.assertEqual(content_after_second.count("### Session"), 1)
+
+
+class TestEmDashNormalization(FlushTestCase):
+    def test_em_dash_stripped_from_daily_output(self):
+        em_dash = chr(0x2014)
+        turns = [("user", "before {} after".format(em_dash))] + self.five_turns()
+        self.run_flush("emdash-session", turns)
+        content = self.daily_path().read_text(encoding="utf-8")
+        self.assertNotIn(em_dash, content)
+
+
+class TestHealthJson(FlushTestCase):
+    def _health(self):
+        health_path = _common.state_dir() / "health.json"
+        return json.loads(health_path.read_text(encoding="utf-8"))
+
+    def test_written_on_success(self):
+        self.run_flush("health-ok", self.five_turns())
+        payload = self._health()
+        self.assertEqual(payload["component"], "flush")
+        self.assertEqual(payload["error"], "ok")
+
+    def test_written_on_failure(self):
+        hook_input_path = _common.state_dir() / "hookin-bad.json"
+        _write_hook_input(hook_input_path, "health-fail", self.vault / "does-not-exist.jsonl")
+        flush.main(["--hook-input", str(hook_input_path), "--reason", "sessionend"])
+        payload = self._health()
+        self.assertTrue(payload["error"])
+
+    def test_warning_history_caps_at_twenty(self):
+        sdir = _common.state_dir()
+        for i in range(25):
+            flush.write_health(sdir, "warn:test-{}".format(i), warning=True)
+        payload = self._health()
+        self.assertEqual(len(payload["warnings"]), 20)
+        self.assertEqual(payload["warnings"][-1], "warn:test-24")
+
+
+class TestHookInputSweep(FlushTestCase):
+    def test_consumed_input_is_deleted(self):
+        hook_input_path = self.run_flush("sweep-session", self.five_turns(), hook_input_name="hookin-consumed.json")
+        self.assertFalse(hook_input_path.exists())
+
+    def test_stale_hookin_is_swept_and_fresh_is_kept(self):
+        sdir = _common.state_dir()
+        stale = sdir / "hookin-stale.json"
+        stale.write_text("{}", encoding="utf-8")
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        self.run_flush("sweep-session-2", self.five_turns(), hook_input_name="hookin-fresh.json")
+
+        self.assertFalse(stale.exists())
+
+    def test_non_hookin_file_never_swept(self):
+        sdir = _common.state_dir()
+        other = sdir / "not-a-hook-input.json"
+        other.write_text("{}", encoding="utf-8")
+        old_time = time.time() - 7200
+        os.utime(other, (old_time, old_time))
+
+        self.run_flush("sweep-session-3", self.five_turns())
+
+        self.assertTrue(other.exists())
 
 
 if __name__ == "__main__":

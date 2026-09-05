@@ -15,6 +15,11 @@
       { "hooks": [
         { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-end"], "timeout": 10 }
       ] }
+    ],
+    "PreCompact": [
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "pre-compact"], "timeout": 10 }
+      ] }
     ]
   }
 }

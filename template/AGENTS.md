@@ -25,6 +25,7 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal)
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
+- `daily/` - machine-written session log, one file per day; read it, never hand-edit it (see below)
 <!-- SETUP: add lines for any optional scope folders you created (Goals, Vault, Body, Mind). -->
 
 ## Conventions
@@ -73,6 +74,12 @@ The files above are the source of truth. On top of them sits a searchable index,
 - Add only durable facts - decisions, preferences, commitments. Not session chatter.
 - It calls a remote API, so it can be slow or offline. If it fails, carry on with the vault
   files; never block a reply on it.
+
+## Daily log
+`daily/YYYY-MM-DD.md` is written by the hooks, not by you. On `SessionEnd` and `PreCompact` the
+engine appends a transcript slice for that session to the current day's file. Read it when you
+need what happened in a session you were not part of, but never hand-edit it, it is the raw
+material a future knowledge-base compile will read from.
 
 ## Backups
 The vault is a git repo. `.claude/backup.sh` commits and pushes anything that changed; the

@@ -286,6 +286,11 @@ Python dispatcher entry on each of the three events, plus one guard entry on `Se
       { "hooks": [
         { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-end"], "timeout": 10 }
       ] }
+    ],
+    "PreCompact": [
+      { "hooks": [
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "pre-compact"], "timeout": 10 }
+      ] }
     ]
   }
 }
@@ -305,6 +310,18 @@ echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/h
 
 That must print exactly one line of JSON. If it prints nothing, the hook is broken and continuity
 is silently dead. Debug it now, not later.
+
+### The daily log
+
+`SessionEnd` and `PreCompact` both hand their hook payload to `.claude/hooks/flush.py`, spawned
+detached so the hook itself returns immediately: `session-end`/`pre-compact` write the payload to
+a short-lived file in `.claude/hooks/.state/` (the child cannot inherit stdin) and start `flush.py`
+without waiting on it. `flush.py` reads the transcript, trims it to a bounded window, and appends
+an entry to `{{VAULT_PATH}}/daily/YYYY-MM-DD.md`, creating that file with a small skeleton the
+first time a day writes to it. `PreCompact` fires the same path just before a context compaction,
+so a long session's earlier turns are not lost to the compaction boundary. This is machine-written
+output: never hand-edit `daily/`, only read it. See `template/.claude/hooks/flush.py` in the repo
+for the full source; write it by copying that file rather than retyping it here.
 
 ---
 

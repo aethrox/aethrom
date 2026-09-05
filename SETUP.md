@@ -151,7 +151,7 @@ Code, skip to PHASE 5 and tell the user at the end that the protocol in `AGENTS.
 way, it is just read rather than enforced.
 
 `template/.claude/settings.json` is the same file on every platform: one Python dispatcher
-(`hooks.py`) on each of the three events, plus one guard fallback on `SessionStart`, wired in
+(`hooks.py`) on each of the four events, plus one guard fallback on `SessionStart`, wired in
 exec form. Rename it to
 `settings.local.json` in the vault, then substitute the placeholders found in PHASE 0:
 `{{PYTHON_PATH}}`, `{{GUARD_COMMAND}}`, `{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}`.
@@ -164,6 +164,16 @@ echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/h
 
 That must print exactly one line of JSON. If it prints nothing, the hook is broken and continuity
 is silently dead, debug it now.
+
+### The daily log
+
+`SessionEnd` and `PreCompact` both hand their hook payload to `.claude/hooks/flush.py`, spawned
+detached so the hook returns immediately: the payload is written to a short-lived file in
+`.claude/hooks/.state/` (the detached child has no inherited stdin), then `flush.py` runs against
+it without the hook waiting. It reads the transcript, trims it to a bounded window, and appends an
+entry to `{{VAULT_PATH}}/daily/YYYY-MM-DD.md`, creating that file with a small skeleton on first
+write. `PreCompact` runs the same path just before a context compaction, so a long session is not
+lost to the compaction boundary. `daily/` is machine-written: read it, never hand-edit it.
 
 ---
 

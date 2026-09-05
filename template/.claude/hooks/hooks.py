@@ -2,8 +2,11 @@ import sys
 
 sys.dont_write_bytecode = True
 
+import json
 import os
 import re
+import secrets
+import subprocess
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +20,7 @@ from _common import (  # noqa: E402
     session_key,
     state_dir,
 )
+import portalock  # noqa: E402
 
 LOCK_ATTEMPTS = 200
 LOCK_SLEEP_SECONDS = 0.01
@@ -198,6 +202,51 @@ def cmd_prompt_counter(argv):
         )
 
 
+def _handoff_to_flush(payload, reason):
+    """Hand the hook payload to a detached flush.py run and return immediately.
+
+    The child process cannot inherit this process's stdin (it is already
+    consumed, and a detached child has none anyway), so the payload goes
+    through a file instead. Permissions are 0600 because the payload carries
+    the transcript path. The hook must never wait on the child: SessionEnd and
+    PreCompact both have short timeouts, and the whole point of detaching is
+    that the flush can take longer than either allows.
+    """
+    sdir = state_dir()
+    name = "hookin-{}-{}.json".format(os.getpid(), secrets.token_hex(4))
+    hook_input_path = sdir / name
+    try:
+        descriptor = os.open(str(hook_input_path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+        except BaseException:
+            os.close(descriptor)
+            raise
+    except OSError:
+        return
+
+    flush_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "flush.py")
+    try:
+        subprocess.Popen(
+            [sys.executable, flush_script, "--hook-input", str(hook_input_path), "--reason", reason],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **portalock.detached_kwargs()
+        )
+    except OSError:
+        try:
+            hook_input_path.unlink()
+        except OSError:
+            pass
+
+
+def cmd_pre_compact(argv):
+    payload = read_hook_input()
+    _handoff_to_flush(payload, "precompact")
+
+
 def cmd_session_end(argv):
     payload = read_hook_input()
     key = session_key(payload.get("session_id"))
@@ -228,11 +277,14 @@ def cmd_session_end(argv):
         except OSError:
             pass
 
+    _handoff_to_flush(payload, "sessionend")
+
 
 SUBCOMMANDS = {
     "session-start": cmd_session_start,
     "prompt-counter": cmd_prompt_counter,
     "session-end": cmd_session_end,
+    "pre-compact": cmd_pre_compact,
 }
 
 
