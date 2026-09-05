@@ -295,6 +295,15 @@ class FlushTestCase(VaultTestCase):
         self._popen_patcher = mock.patch("flush.subprocess.Popen")
         self._popen_mock = self._popen_patcher.start()
         self.addCleanup(self._popen_patcher.stop)
+        # Pretend the CLI is on PATH. Without this the suite passes only on a
+        # machine that happens to have Claude Code installed: _run_claude checks
+        # shutil.which first and returns claude-cli-missing before the mocked
+        # subprocess.run is ever reached, so ten tests assert against a fallback
+        # entry instead of the behaviour they name. CI found it; two developer
+        # machines did not, because both had the binary.
+        self._which_patcher = mock.patch("flush.shutil.which", return_value="claude")
+        self._which_mock = self._which_patcher.start()
+        self.addCleanup(self._which_patcher.stop)
 
     def run_flush(self, session_id, turns, reason="sessionend", hook_input_name="hookin-test.json"):
         transcript_path = self.vault / "transcript.jsonl"
