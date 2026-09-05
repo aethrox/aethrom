@@ -58,9 +58,19 @@ a flag that skips consent to the script.
    `.claude/hooks/.state/import-chatgpt.py`. Run it with `--preview` first. Only after the second
    explicit confirmation, run it again with the same filters, without `--preview`.
 5. Use a separate `--exclude-keyword` for each keyword. Dates are inclusive on both ends.
+6. Run the script with the interpreter recorded in `.claude/settings.local.json`, never a bare
+   `python3`: on Windows, `python3` on PATH is often a Microsoft Store stub that fails when run.
+   Resolve it the same way the `doctor` skill does, falling back to `python3` then `python`:
+
+```bash
+PY=$(grep -o '"command":[[:space:]]*"[^"]*"' .claude/settings.local.json 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+for candidate in "$PY" python3 python; do
+  [ -n "$candidate" ] && "$candidate" -c "1" >/dev/null 2>&1 && { PY="$candidate"; break; }
+done
+```
 
 ```text
-python3 .claude/hooks/.state/import-chatgpt.py conversations.json \
+"$PY" .claude/hooks/.state/import-chatgpt.py conversations.json \
   --preview --start 2025-01-01 --end 2025-12-31 \
   --exclude-keyword "health" --exclude-keyword "private project"
 ```
@@ -92,6 +102,19 @@ import sys
 MAX_EXPORT_BYTES = 50 * 1024 * 1024
 RECENT_MONTHS = 12
 MAX_FILE_CHARS = 200000
+
+# The export is someone else's writing and em dashes (U+2014) are close to
+# certain in it. backup.sh refuses to commit any file containing one, and it
+# refuses the whole staged change, not just that file: an import written
+# today would silently stop every hourly backup from then on until someone
+# went looking. Strip it here, at the one place text from the export becomes
+# text on disk, the same way compile.py and flush.py strip it on their own
+# write paths.
+EM_DASH = chr(0x2014)  # the em dash, spelled without writing one
+
+
+def strip_em_dash(text):
+    return text.replace(EM_DASH, "-")
 
 
 def iso_date(value):
@@ -275,7 +298,7 @@ def select_conversations(conversations, size, start, end, keywords):
 
 def conversation_block(record):
     moment = record["moment"]
-    title = record["title"].replace("\r", " ").replace("\n", " ").strip()
+    title = strip_em_dash(record["title"].replace("\r", " ").replace("\n", " ").strip())
     heading = "### Session (%s UTC) ChatGPT: %s\n\n" % (
         moment.strftime("%Y-%m-%d %H:%M"),
         title or "untitled",
@@ -283,7 +306,7 @@ def conversation_block(record):
     lines = []
     for role, text in record["turns"]:
         label = "**User:**" if role == "user" else "**Assistant:**"
-        lines.append("%s %s\n" % (label, text))
+        lines.append("%s %s\n" % (label, strip_em_dash(text)))
     return heading + "\n".join(lines)
 
 
@@ -478,9 +501,9 @@ Once the import is done, give the user an honest summary:
   archive can spread across several evenings. Importing years of history at once means a lot of
   compile runs, and every run spends part of the user's Claude subscription; say this plainly
   rather than letting the user find out later.
-- If the user does not want to wait, `python3 .claude/hooks/compile.py --dry-run` can be run
-  first, then `python3 .claude/hooks/compile.py` with explicit permission. Every pass spends part
-  of the subscription's budget.
+- If the user does not want to wait, `"$PY" .claude/hooks/compile.py --dry-run` can be run first
+  (with `$PY` resolved as in step 6 above), then `"$PY" .claude/hooks/compile.py` with explicit
+  permission. Every pass spends part of the subscription's budget.
 - If the user does not want the content sent to Claude at all, do not run the compiler, and delete
   the relevant monthly part files before the evening compile runs.
 - If older archive content was skipped because of the 50 MB limit, say so explicitly and ask

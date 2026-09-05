@@ -21,6 +21,28 @@ silent failure visible.
 Checks are read-only. Never fix anything on your own, report first, then fix only if the user
 asks.
 
+## Resolving Python
+
+Several checks below need a working Python interpreter, and this skill exists partly to detect
+the case where `python3` on PATH does not work: on Windows, `python3` is a Microsoft Store stub
+that resolves on PATH and then fails when actually run. A check that shells out to a bare
+`python3` cannot run on the very machine where that failure happens. Every check below that needs
+Python resolves one first, with this line, in this order: the interpreter recorded in
+`.claude/settings.local.json`'s `SessionStart` hook (the same value check 4 tests), then `python3`,
+then `python`, taking the first one that actually runs:
+
+```bash
+PY=$(grep -o '"command":[[:space:]]*"[^"]*"' .claude/settings.local.json 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+for candidate in "$PY" python3 python; do
+  [ -n "$candidate" ] && "$candidate" -c "1" >/dev/null 2>&1 && { PY="$candidate"; break; }
+done
+```
+
+This uses only `grep` and `sed`, never Python, to find the configured path, so it works even when
+every Python on the machine is broken. Each check below that needs Python repeats this line first
+(the Bash tool does not keep shell variables between separate commands), then uses `"$PY"` instead
+of a bare `python3`.
+
 ## Checks
 
 ### 1. Hook files present
@@ -53,7 +75,11 @@ Fix: add the missing subcommand entry to the `hooks` block in `.claude/settings.
 ### 3. Both settings.json and settings.local.json active at once
 
 ```bash
-python3 - <<'PYCHK'
+PY=$(grep -o '"command":[[:space:]]*"[^"]*"' .claude/settings.local.json 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+for candidate in "$PY" python3 python; do
+  [ -n "$candidate" ] && "$candidate" -c "1" >/dev/null 2>&1 && { PY="$candidate"; break; }
+done
+"$PY" - <<'PYCHK'
 import json
 EVENTS = ("SessionStart", "UserPromptSubmit", "SessionEnd", "PreCompact")
 counts = {e: 0 for e in EVENTS}
@@ -93,43 +119,35 @@ such as `env` and `permissions` alone. Only one of the two files should carry th
 
 ### 4. The configured Python actually runs
 
+This is the check most likely to run on the very machine where the failure happens, so it must
+not itself shell out to a bare `python3`: it tests the configured interpreter directly with shell
+tools only.
+
 ```bash
-python3 - <<'PYCHK'
-import json
-import subprocess
-try:
-    data = json.load(open(".claude/settings.local.json", encoding="utf-8"))
-except (OSError, ValueError) as exc:
-    print("python check: could not read settings.local.json (%s)" % exc)
-    raise SystemExit(0)
-hooks = data.get("hooks", {}).get("SessionStart", [])
-interpreter = None
-for matcher in hooks:
-    for hook in matcher.get("hooks", []):
-        if "hooks.py" in " ".join(hook.get("args") or []):
-            interpreter = hook.get("command")
-            break
-if not interpreter:
-    print("python check: no SessionStart dispatcher entry found")
-    raise SystemExit(0)
-try:
-    result = subprocess.run([interpreter, "-c", "import sys; print(sys.version)"], capture_output=True, text=True, timeout=10)
-    print("python check: ok, %s" % result.stdout.strip() if result.returncode == 0 else "python check: FAILED, %s" % result.stderr.strip())
-except OSError as exc:
-    print("python check: FAILED, could not run %s (%s)" % (interpreter, exc))
-PYCHK
+INTERPRETER=$(grep -o '"command":[[:space:]]*"[^"]*"' .claude/settings.local.json 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+if [ -z "$INTERPRETER" ]; then
+  echo "python check: no SessionStart dispatcher entry found in settings.local.json"
+elif "$INTERPRETER" -c "import sys; print(sys.version)" 2>/tmp/aethrom-py-check.err; then
+  echo "python check: ok, configured interpreter $INTERPRETER runs"
+else
+  echo "python check: FAILED, could not run $INTERPRETER ($(cat /tmp/aethrom-py-check.err 2>/dev/null))"
+fi
 ```
 
 Green: `ok`. Red: `FAILED`, the interpreter configured in `settings.local.json` does not run on
 this machine, so every hook silently produces nothing.
-Fix: find a working interpreter (`command -v python3`, or a venv path), update `{{PYTHON_PATH}}`
-in `.claude/settings.local.json` to that path.
+Fix: find a working interpreter (`command -v python3`, `command -v python`, or a venv path),
+update `{{PYTHON_PATH}}` in `.claude/settings.local.json` to that path.
 
 ### 5. The engine scripts import cleanly
 
 ```bash
+PY=$(grep -o '"command":[[:space:]]*"[^"]*"' .claude/settings.local.json 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+for candidate in "$PY" python3 python; do
+  [ -n "$candidate" ] && "$candidate" -c "1" >/dev/null 2>&1 && { PY="$candidate"; break; }
+done
 for f in hooks.py _common.py flush.py compile.py graph_check.py portalock.py; do
-  python3 -c "import py_compile; py_compile.compile('.claude/hooks/$f', doraise=True)" 2>&1 \
+  "$PY" -c "import py_compile; py_compile.compile('.claude/hooks/$f', doraise=True)" 2>&1 \
     && echo "$f: ok" || echo "$f: SYNTAX ERROR"
 done
 ```
@@ -166,9 +184,13 @@ chain is broken, go back to checks 1, 2 and 4.
 ### 8. Compile status
 
 ```bash
+PY=$(grep -o '"command":[[:space:]]*"[^"]*"' .claude/settings.local.json 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+for candidate in "$PY" python3 python; do
+  [ -n "$candidate" ] && "$candidate" -c "1" >/dev/null 2>&1 && { PY="$candidate"; break; }
+done
 f=".claude/hooks/.state/compile-state.json"
 if [ -f "$f" ]; then
-  python3 -c "
+  "$PY" -c "
 import json
 d = json.load(open('$f', encoding='utf-8'))
 print('last_run:', d.get('last_run', 'none'))
@@ -177,6 +199,14 @@ ingested = set(d.get('ingested', {}).keys())
 import glob, os
 daily_files = {os.path.basename(p) for p in glob.glob('daily/*.md')}
 print('uningested daily files:', len(daily_files - ingested))
+quarantined = [n for n, e in (d.get('failures') or {}).items() if e.get('quarantined')]
+if quarantined:
+    print('QUARANTINED, these days will never compile until someone looks:')
+    for name in sorted(quarantined):
+        entry = d['failures'][name]
+        print('  ', name, '->', entry.get('reason'), entry.get('detail', ''))
+else:
+    print('quarantined daily files: none')
 " 2>&1 || echo "compile: state file is corrupt, could not parse JSON"
 else
   echo "compile: no state file yet, the compiler has never run"
@@ -186,8 +216,8 @@ fi
 Green: `last_status` is `ok` and `last_run` is within 48 hours. Yellow: no state file yet, on a
 new vault or before the first evening pass. Red: `last_status` starts with `fail:`, or `last_run`
 is older than 48 hours.
-Fix: run one pass by hand and read the error: `python3 .claude/hooks/compile.py --dry-run`, then
-`python3 .claude/hooks/compile.py`.
+Fix: run one pass by hand with `"$PY"` resolved as above and read the error:
+`"$PY" .claude/hooks/compile.py --dry-run`, then `"$PY" .claude/hooks/compile.py`.
 
 ### 9. Both health channels
 
@@ -271,7 +301,11 @@ with `git rm --cached <file>`, confirm the `.gitignore` rule, and rotate any key
 ### 15. Graph integrity (broken links and orphan notes)
 
 ```bash
-python3 .claude/hooks/graph_check.py
+PY=$(grep -o '"command":[[:space:]]*"[^"]*"' .claude/settings.local.json 2>/dev/null | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+for candidate in "$PY" python3 python; do
+  [ -n "$candidate" ] && "$candidate" -c "1" >/dev/null 2>&1 && { PY="$candidate"; break; }
+done
+"$PY" .claude/hooks/graph_check.py
 ```
 
 Memory is not a flat pile of files, it is a **graph**: a note is found only if something links to

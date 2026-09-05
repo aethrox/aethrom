@@ -242,9 +242,14 @@ copy is wired correctly, not enough to rebuild it from scratch.
 - **Exec form, no shell, no shebang.** Claude Code invokes `{{PYTHON_PATH}}` directly with
   `hooks.py` as an argument. Nothing depends on execute bits or `#!` lines, so it behaves
   identically on Windows, Linux and macOS.
-- **A guard fallback rides alongside every hook.** `guard.sh` / `guard.cmd` actually run the
-  configured interpreter; if it fails, they print one line of warning JSON instead of leaving
-  continuity silently dead. If Python works, they print nothing.
+- **A guard fallback sits on `SessionStart` alone**, not on every hook (see `SETUP.md`, and
+  `settings.json`'s `SessionStart` block, which is the only one with a second hook entry).
+  `guard.sh` / `guard.cmd` actually run the configured interpreter; if it fails, they print one
+  line of warning JSON instead of leaving continuity silently dead. If Python works, they print
+  nothing. `SessionStart` is the only event whose output reaches the user as injected context, so
+  it is the only one that gets a fallback: if the interpreter breaks, `SessionEnd` and
+  `PreCompact` fail with no warning at all, because their hook has no guard entry to fall back to.
+  The daily log then simply stops being written, silently, until the next `SessionStart` says so.
 
 ### `.claude/hooks/_common.py` and `.claude/hooks/hooks.py`
 
@@ -897,9 +902,10 @@ FAIL_MARKER="$STATE_DIR/backup_failed"
 OK_STAMP="$STATE_DIR/backup_ok"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
-# A scheduled run has nowhere to print. Leave the reason where session-start.sh
-# will find it, so the next Claude session says so out loud. Two lines, fixed
-# size: when it started failing, and why it failed last.
+# A scheduled run has nowhere to print. Leave the reason where the next
+# SessionStart hook will find it, so the session says so out loud. Two lines,
+# not fixed size: when it started failing, and why it failed last. The reason
+# line has no length cap here, so the reader must cap it before injecting it.
 die() { # die <reason>
   local since
   echo "STOPPED: $1" >&2

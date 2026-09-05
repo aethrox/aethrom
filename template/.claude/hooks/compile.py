@@ -28,7 +28,6 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -110,8 +109,11 @@ def write_health(state_dir: Path, error: str, warning: bool = False) -> None:
         pass
 
 
+QUARANTINE_THRESHOLD = 3
+
+
 def _default_state() -> dict:
-    return {"ingested": {}, "cursor": "", "last_run": "", "last_status": "ok", "runs": []}
+    return {"ingested": {}, "cursor": "", "last_run": "", "last_status": "ok", "runs": [], "failures": {}}
 
 
 def load_state(path: Path) -> dict:
@@ -123,13 +125,17 @@ def load_state(path: Path) -> dict:
     ingested = state.get("ingested", {})
     runs = state.get("runs", [])
     cursor = state.get("cursor", "")
+    failures = state.get("failures", {})
     if not isinstance(ingested, dict) or not isinstance(runs, list) or not isinstance(cursor, str):
+        raise ValueError("compile-state-schema-invalid")
+    if not isinstance(failures, dict):
         raise ValueError("compile-state-schema-invalid")
     normalized = _default_state()
     normalized.update(state)
     normalized["ingested"] = ingested
     normalized["cursor"] = cursor
     normalized["runs"] = runs[-20:]
+    normalized["failures"] = failures
     return normalized
 
 
@@ -167,11 +173,19 @@ def _daily_sort_key(path: Path):
     return parsed, path.name
 
 
-def changed_daily_logs(vault_root: Path, ingested: dict, before_date=None):
+def changed_daily_logs(vault_root: Path, ingested: dict, before_date=None, failures=None):
     """Return [(path, sha256), ...] for daily files whose digest differs from `ingested`.
 
     `before_date`, when given, excludes any file dated on or after it: this is
     how the off-hours catch-up path avoids ingesting today's still-open log.
+
+    `failures`, when given, is the compile state's per-file failure record. A
+    file quarantined there (three consecutive failures on the same content)
+    is skipped as long as its content has not changed since: this is what
+    stops a daily file that always fails from being picked first, forever,
+    and blocking every other file behind it. A quarantined file becomes
+    eligible again the moment its digest changes, since new content deserves
+    a fresh chance.
     """
     daily_dir = vault_root / "daily"
     if not daily_dir.exists():
@@ -181,6 +195,7 @@ def changed_daily_logs(vault_root: Path, ingested: dict, before_date=None):
         raise PolicyError("unsafe-daily-directory")
     if not _path_within(daily_dir.resolve(strict=True), vault_root.resolve(strict=True)):
         raise PolicyError("daily-directory-escape")
+    failures = failures or {}
     changed = []
     for path in sorted(daily_dir.glob("*.md"), key=_daily_sort_key):
         file_stat = path.lstat()
@@ -189,8 +204,12 @@ def changed_daily_logs(vault_root: Path, ingested: dict, before_date=None):
         if before_date is not None and _daily_sort_key(path)[0] >= before_date:
             continue
         digest = _sha256(path)
-        if ingested.get(path.name) != digest:
-            changed.append((path, digest))
+        if ingested.get(path.name) == digest:
+            continue
+        failure_entry = failures.get(path.name)
+        if failure_entry and failure_entry.get("quarantined") and failure_entry.get("digest") == digest:
+            continue
+        changed.append((path, digest))
     return changed
 
 
@@ -425,17 +444,21 @@ def _manifest(root: Path) -> dict:
 
 
 def _is_allowed_output_file(relative: str) -> bool:
+    path = Path(relative)
+    parts = path.parts
+    if ".." in parts:
+        return False
     if relative in ("knowledge/index.md", "knowledge/log.md"):
         return True
-    path = Path(relative)
     if path.suffix != ".md":
         return False
-    parts = path.parts
     return len(parts) >= 3 and parts[0] == "knowledge" and parts[1] in ("concepts", "connections")
 
 
 def _is_allowed_output_directory(relative: str) -> bool:
     parts = Path(relative).parts
+    if ".." in parts:
+        return False
     return len(parts) >= 2 and parts[0] == "knowledge" and parts[1] in ("concepts", "connections")
 
 
@@ -476,8 +499,9 @@ def _validate_manifest_diff(before: dict, after: dict):
 # ---------------------------------------------------------------------------
 
 
-def control_plane_digest(vault_root: Path) -> dict:
-    """Digest everything under the vault's .claude/, except the state directory.
+def prompt_surface_digest(vault_root: Path) -> dict:
+    """Digest everything that feeds back into a future prompt, keyed by
+    vault-relative posix path.
 
     The manifest diff watches the stage, so it cannot see a write that never
     goes through the stage at all. The model runs with cwd set to the stage and
@@ -486,28 +510,59 @@ def control_plane_digest(vault_root: Path) -> dict:
     rather than being visibly blocked, so we never saw the tool layer say no.
     Treating a soft refusal as a boundary is how a cage develops a hole.
 
-    So the highest value target gets a hard check instead. .claude/ is the
-    control plane: the hook wiring and settings.local.json, which holds the API
-    key. It has no business changing while an unattended compile runs, and
-    comparing it before and after the call costs a few files' worth of hashing.
-    Two subtrees are excluded, both because they change on their own and would
-    turn this into the guard nobody keeps switched on: .state/, where a
-    concurrent flush legitimately writes, and mem0-venv/, the optional mem0
-    virtualenv, which is thousands of files that Python rewrites bytecode into.
-    What is left is the wiring and the secrets, which is the part that matters.
+    So the highest value targets get a hard check instead: not just the
+    control plane, but every file whose contents get read back into a
+    session's context by something downstream of here.
+
+    - .claude/, the hook wiring and settings.local.json (which holds the API
+      key). Two subtrees are excluded, both because they change on their own
+      and would turn this into the guard nobody keeps switched on: .state/,
+      where a concurrent flush legitimately writes, and mem0-venv/, the
+      optional mem0 virtualenv, which is thousands of files that Python
+      rewrites bytecode into.
+    - AGENTS.md and CLAUDE.md at the vault root: the agent's whole
+      instruction file.
+    - Every *.md directly inside the companion memory folder ('🔮 850-*',
+      globbed, never hardcoded): hooks.py injects the first 60 lines of
+      Rules.md into every session.
+    - .state/needs_reflection.*: hooks.py reads these back verbatim at the
+      next SessionStart.
+
+    Everything else under .state/ stays excluded, deliberately: a concurrent
+    flush writes there legitimately, and this digest is not a claim that the
+    rest of .state/ is safe, only that these two named surfaces are covered.
     """
-    root = vault_root / ".claude"
-    if not root.is_dir():
-        return {}
-    skip = {".state", "mem0-venv", "__pycache__"}
     digests = {}
-    for path in sorted(root.rglob("*")):
-        parts = path.relative_to(root).parts
-        if skip.intersection(parts):
+
+    claude_root = vault_root / ".claude"
+    if claude_root.is_dir():
+        skip = {".state", "mem0-venv", "__pycache__"}
+        for path in sorted(claude_root.rglob("*")):
+            parts = path.relative_to(claude_root).parts
+            if skip.intersection(parts):
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            digests[path.relative_to(vault_root).as_posix()] = _sha256(path)
+
+    for name in ("AGENTS.md", "CLAUDE.md"):
+        path = vault_root / name
+        if path.is_file() and not path.is_symlink():
+            digests[name] = _sha256(path)
+
+    for memory_folder in sorted(vault_root.glob("\U0001F52E 850-*")):
+        if not memory_folder.is_dir() or memory_folder.is_symlink():
             continue
-        if path.is_symlink() or not path.is_file():
-            continue
-        digests[str(path.relative_to(root))] = _sha256(path)
+        for note in sorted(memory_folder.glob("*.md")):
+            if note.is_file() and not note.is_symlink():
+                digests[note.relative_to(vault_root).as_posix()] = _sha256(note)
+
+    state_directory = claude_root / "hooks" / ".state"
+    if state_directory.is_dir():
+        for reflection_file in sorted(state_directory.glob("needs_reflection.*")):
+            if reflection_file.is_file() and not reflection_file.is_symlink():
+                digests[reflection_file.relative_to(vault_root).as_posix()] = _sha256(reflection_file)
+
     return digests
 
 
@@ -680,12 +735,17 @@ def _compile_one(vault_root: Path, state_dir: Path, daily_path: Path, expected_d
         # rather than going unnoticed.
         (stage / ".aethrom-compile-prompt.md").write_text(prompt, encoding="utf-8")
         before = _manifest(stage)
-        control_before = control_plane_digest(vault_root)
+        surface_before = prompt_surface_digest(vault_root)
         error = _run_claude(prompt, stage)
         if error is not None:
             return error, error
-        if control_plane_digest(vault_root) != control_before:
-            raise PolicyError("control-plane-changed")
+        surface_after = prompt_surface_digest(vault_root)
+        if surface_after != surface_before:
+            changed_paths = sorted(
+                set(surface_before) ^ set(surface_after)
+                | {key for key in surface_before if surface_before.get(key) != surface_after.get(key)}
+            )
+            raise PolicyError("prompt-surface-changed:{}".format(changed_paths[0]))
         if _sha256(daily_path) != expected_digest:
             return "source-changed", "source-changed-after-call"
         after = _manifest(stage)
@@ -740,6 +800,34 @@ def _record_failure(state_dir, state_path, state, daily_name, reason, detail="",
     _release_trigger_claim(trigger_claim, state_dir)
 
 
+def _record_daily_failure(state, daily_name: str, digest: str, reason: str, detail: str, state_dir: Path) -> None:
+    """Track consecutive failures for one daily file, and quarantine it after
+    QUARANTINE_THRESHOLD in a row on the same content.
+
+    Without this, a daily file that always fails is retried first on every
+    run (changed_daily_logs is date-ordered) and blocks every other file
+    behind it indefinitely. The counter is keyed to the file's digest so a
+    later edit to the file (a different digest) starts over with a fresh
+    count, rather than a stale failure history following unrelated content.
+    """
+    failures = state.setdefault("failures", {})
+    previous = failures.get(daily_name)
+    if previous is not None and previous.get("digest") == digest:
+        count = int(previous.get("count", 0)) + 1
+    else:
+        count = 1
+    entry = {"count": count, "digest": digest, "reason": reason, "detail": detail}
+    if count >= QUARANTINE_THRESHOLD:
+        entry["quarantined"] = True
+        entry["since"] = _iso_now()
+        write_health(
+            state_dir,
+            "warn:quarantined:{}:{}".format(daily_name, reason),
+            warning=True,
+        )
+    failures[daily_name] = entry
+
+
 def _validated_trigger_claim(path, state_dir: Path):
     if path is None:
         return None
@@ -782,7 +870,9 @@ def _run_locked(args, vault_root: Path, state_dir: Path, trigger_claim) -> int:
         _record_failure(state_dir, state_path, state, "", "state-or-daily-read-failed", str(exc), trigger_claim)
         return 0
     try:
-        changed = changed_daily_logs(vault_root, state["ingested"], before_date=args.before_date)
+        changed = changed_daily_logs(
+            vault_root, state["ingested"], before_date=args.before_date, failures=state.get("failures", {})
+        )
     except (OSError, ValueError, PolicyError) as exc:
         _record_failure(state_dir, state_path, state, "", "state-or-daily-read-failed", str(exc), trigger_claim)
         return 0
@@ -810,26 +900,47 @@ def _run_locked(args, vault_root: Path, state_dir: Path, trigger_claim) -> int:
         write_health(state_dir, "ok")
         return 0
 
+    # A policy failure is a strong signal that this file's content is what
+    # caused it, not the environment (a timeout, a missing binary), so the
+    # trigger claim is held rather than released: releasing it would let the
+    # very next SessionStart spawn another attempt at the same poisoned file
+    # within seconds. Other failure reasons still release as before, so a
+    # transient failure gets retried the same day. Either way, a run no
+    # longer stops at the first failure: it quarantines that file after
+    # enough consecutive failures and carries on with the rest of the queue.
+    hold_claim = False
     for daily_path, digest in selected:
         timestamp = _iso_now()
         reason, detail = _compile_one(vault_root, state_dir, daily_path, digest, timestamp)
         if reason is not None:
-            _record_failure(state_dir, state_path, state, daily_path.name, reason, detail, trigger_claim)
-            return 0
+            state["last_run"] = timestamp
+            state["last_status"] = "fail:{}".format(reason)
+            _append_run(state, timestamp, daily_path.name, "fail:{}".format(reason))
+            _record_daily_failure(state, daily_path.name, digest, reason, detail, state_dir)
+            try:
+                _save_state(state_path, state)
+            except OSError:
+                pass
+            write_health(state_dir, detail or reason)
+            if reason == "policy":
+                hold_claim = True
+            continue
 
         state["ingested"][daily_path.name] = digest
         state["cursor"] = daily_path.name
         state["last_run"] = timestamp
         state["last_status"] = "ok"
+        state.setdefault("failures", {}).pop(daily_path.name, None)
         _append_run(state, timestamp, daily_path.name, "ok")
         try:
             _save_state(state_path, state)
         except OSError:
             write_health(state_dir, "state-write-failed")
-            _release_trigger_claim(trigger_claim, state_dir)
-            return 0
+            continue
         write_health(state_dir, "ok")
 
+    if not hold_claim:
+        _release_trigger_claim(trigger_claim, state_dir)
     return 0
 
 

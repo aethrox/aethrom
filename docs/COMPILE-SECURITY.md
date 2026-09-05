@@ -17,7 +17,7 @@ of it was written with the vault's safety in mind, and some of it could be adver
 web page, a malicious file, a prompt-injection payload embedded in a document the session read).
 
 `compile.py` takes that untrusted daily text, along with the existing `knowledge/index.md`, and
-hands both to `claude -p --model sonnet --permission-mode acceptEdits --allowedTools
+hands both to `claude -p --model sonnet --safe-mode --permission-mode acceptEdits --allowedTools
 Read,Write,Edit,Glob,Grep`, with a 900 second timeout, and nobody reviewing its output before it
 lands. Measured against the real CLI: this auto-approving write path works exactly as intended,
 which is exactly why it needs a cage. If a daily log contains a line shaped like
@@ -59,12 +59,15 @@ in the stage, by relative path, type, and sha256, before the model call and agai
 - any type change (a file replaced by a directory, or by a symlink).
 
 If a path does not match the allow-list, it is an error, full stop. There is no code path that
-trims an unexpected path down to something acceptable and continues; a run that touches
-`.aethrom-compile-prompt.md`, or `../escape.md`, or a new top-level file, fails the whole compile
-instead of promoting the parts that happen to look safe. This is what stops the injection scenario
-above even if the model fully complies with it: writing to `.claude/settings.json` inside the stage
-does happen, potentially, but it never leaves the stage, because the diff rejects the run before
-anything is promoted.
+trims an unexpected path down to something acceptable and continues; a write to
+`.aethrom-compile-prompt.md`, or a new top-level file *inside the stage*, fails the whole compile
+instead of promoting the parts that happen to look safe. The manifest only ever sees the stage,
+though: `_manifest` walks the stage directory, nothing else, so a write to `../escape.md` (or any
+other absolute or relative path outside the stage) never enters the manifest at all and this check
+cannot see it, let alone reject it. What stops that case is the prompt-surface digest described
+below, which is a before/after comparison of files outside the stage, not the manifest diff. The
+manifest diff's job is narrower than "any escape fails the compile": it governs what may leave the
+stage and be promoted, given that the write already stayed inside the stage.
 
 **Nothing is promoted until it is validated, and only the validated files move.** `_compile_one`
 computes `before` and `after` manifests around the model call, calls `_validate_manifest_diff`, and
@@ -88,7 +91,7 @@ crash or a concurrent read observes a half-written `knowledge/index.md`.
 `portalock.exclusive(..., blocking=False)`, means a second compile invocation while one is running
 exits 0 immediately rather than queueing or running concurrently against the same live files.
 
-**The control plane is digested before and after the call.** Everything above watches the stage,
+**The prompt surface is digested before and after the call.** Everything above watches the stage,
 so none of it can see a write that never goes through the stage at all. The model runs with its
 working directory set to the stage and the CLI confines it there, but when that confinement was
 tested against the real binary it showed up as the model *declining*: asked to write outside its
@@ -96,20 +99,36 @@ working directory, once by absolute path and once by `..` traversal, it refused 
 and `permission_denials` came back empty both times. A refusal is not a boundary, and treating one
 as a boundary is how a cage develops a hole.
 
-So `control_plane_digest` hashes every file under the vault's `.claude/`, except `.state/`, before
-the model call and again after it, and a difference raises `PolicyError` with
-`control-plane-changed`. That directory is the highest-value target in the vault: the hook wiring,
-and `settings.local.json`, which holds the API key. It has no business changing during an
-unattended compile. Two subtrees under it are excluded, both because they change on their own:
-`.state/`, where a concurrent flush legitimately writes, and `mem0-venv/`, the optional mem0
-virtualenv, which is thousands of files that Python rewrites bytecode into and would cost a full
-rehash twice per compile. A guard that fires every evening, or that hashes a virtualenv to do it,
-gets switched off within a week. What is left is the wiring and the secrets.
+So `prompt_surface_digest` hashes, before the model call and again after it, everything that feeds
+back into a future prompt, not merely the control plane:
+
+- `.claude/`, except `.state/` and `mem0-venv/` (see below);
+- `AGENTS.md` and `CLAUDE.md` at the vault root, the agent's whole instruction file;
+- every `*.md` directly inside the companion memory folder (`🔮 850-*`, globbed, never a
+  hardcoded name): `hooks.py` injects the first 60 lines of `Rules.md` into every session;
+- `.state/needs_reflection.*`, which `hooks.py` reads back verbatim at the next `SessionStart`.
+
+A difference anywhere in that set raises `PolicyError` with `prompt-surface-changed:<path>`, naming
+the file that moved. Earlier, this digest covered `.claude/` alone (`control_plane_digest`, since
+renamed) on the theory that the hook wiring and `settings.local.json` were the highest-value
+targets. That was true but incomplete: a write to `Rules.md`, `AGENTS.md`, or
+`.state/needs_reflection.x` reported `last_status: ok` while turning one successful injection into
+a permanent one, since each of those files is re-read into a live session's context on every future
+`SessionStart`. The widened digest is scoped to exactly the surface that can do that, not the whole
+vault: a write to an ordinary note, or to `🧠 500-Knowledge/`, is still invisible here, because
+nothing reads those back into a prompt automatically.
+
+Two subtrees under `.claude/` are excluded, both because they change on their own: `.state/`
+(beyond `needs_reflection.*`, which is pulled back in explicitly), where a concurrent flush
+legitimately writes, and `mem0-venv/`, the optional mem0 virtualenv, which is thousands of files
+that Python rewrites bytecode into and would cost a full rehash twice per compile. A guard that
+fires every evening, or that hashes a virtualenv to do it, gets switched off within a week.
 
 This one detects rather than prevents: by the time the digests differ, the write already happened.
 What it buys is that the run fails closed, nothing is promoted, the daily file is not marked
 ingested, and `health.json` names it, instead of the compile reporting success over a tampered
-vault.
+vault. It is not prevention, and the rest of `.state/` stays outside it on purpose: this document
+does not claim `.state/` is safe, only that these named surfaces are covered.
 
 **The prompt itself carries defense in depth, not the boundary.** The prompt delimits the index and
 daily text with explicit `UNTRUSTED ... DATA` markers and instructs the model never to treat
@@ -121,13 +140,17 @@ after the fact, but the manifest diff is what actually has to hold.
 
 ## What this does not claim to stop
 
-A write that lands in the vault but outside `.claude/`, made by something bypassing the stage
-entirely, is still invisible here. `control_plane_digest` covers the control plane, not the whole
-vault, and that is a deliberate limit: digesting every note before and after a fifteen-minute call
-would be slow and would fire every time the user edited a note while the compile ran, which is
-exactly the guard nobody keeps switched on. The layered position is that the CLI keeps the model in
-its working directory, the manifest diff governs what may leave the stage, and the control-plane
-digest catches the case where the highest-value files change anyway.
+A write that lands in the vault but outside the digested surface, made by something bypassing the
+stage entirely, is still invisible here. `prompt_surface_digest` covers everything that feeds back
+into a future prompt, not the whole vault, and that is a deliberate limit: digesting every note
+before and after a fifteen-minute call would be slow and would fire every time the user edited a
+note while the compile ran, which is exactly the guard nobody keeps switched on. A write to an
+ordinary note, to `🧠 500-Knowledge/`, or to any part of `.state/` other than
+`needs_reflection.*`, still passes unnoticed by this layer specifically because nothing reads those
+back into a prompt automatically. The layered position is that the CLI keeps the model in its
+working directory, the manifest diff governs what may leave the stage, and the prompt-surface
+digest catches the case where a write skips the stage and lands directly on a file that gets read
+back into a session.
 
 The model can still write incorrect or low-quality content inside the allow-list; nothing here
 judges the *meaning* of an article, only its *location* and the diff's shape. A vault whose

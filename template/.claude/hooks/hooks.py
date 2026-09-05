@@ -36,6 +36,7 @@ CAP_THREADS = 2000
 CAP_RULES = 4000
 CAP_JOURNAL = 1500
 CAP_REFLECTION = 1000
+CAP_BACKUP_WARN = 1000
 RULES_LINE_LIMIT = 60
 JOURNAL_BLOCK_LINES = 10  # the '## ' heading plus 9 following lines
 INDEX_LINE_LIMIT = 150
@@ -281,6 +282,12 @@ def cmd_session_start(argv):
     rules = cap_section(rules, CAP_RULES, "rules") if rules else ""
     journal = cap_section(journal, CAP_JOURNAL, "journal") if journal else ""
     reflection = cap_section(reflection, CAP_REFLECTION, "memory warnings") if reflection else ""
+    # backup.sh's die() writes the failure reason as a single line, and that
+    # line can be arbitrarily long: the em-dash check reports every offending
+    # file on one line. Uncapped, that line alone could consume the whole
+    # session budget below and evict every other section. Same cap as the
+    # reflection warning, for the same kind of message.
+    backup_warn = cap_section(backup_warn, CAP_BACKUP_WARN, "backup warning") if backup_warn else ""
 
     ctx = _assemble_session_context(
         reflection, backup_warn, last_session, threads, rules, journal, index_block, daily, identity
@@ -290,7 +297,7 @@ def cmd_session_start(argv):
     # per-section caps, drop whole sections in this order until it fits.
     # Last Session, Active Threads and Rules are never dropped.
     if len(ctx) > SESSION_CONTEXT_BUDGET:
-        for name in ("index", "daily", "journal", "reflection"):
+        for name in ("index", "daily", "journal", "reflection", "backup_warn"):
             if name == "index":
                 index_block = ""
             elif name == "daily":
@@ -299,6 +306,8 @@ def cmd_session_start(argv):
                 journal = ""
             elif name == "reflection":
                 reflection = ""
+            elif name == "backup_warn":
+                backup_warn = ""
             ctx = _assemble_session_context(
                 reflection, backup_warn, last_session, threads, rules, journal, index_block, daily, identity
             )

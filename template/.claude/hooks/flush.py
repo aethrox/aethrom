@@ -209,24 +209,49 @@ def read_transcript(path: Path) -> "tuple[list, bool]":
 
 
 def format_turns(turns, max_turns: int = MAX_TURNS, max_chars: int = MAX_TRANSCRIPT_CHARS):
-    """Keep the newest complete turns and snap a character cut to a turn boundary."""
+    """Keep the newest complete turns that fit in max_chars, working backward
+    from the most recent turn.
+
+    Snapping forward to the next turn boundary (the previous approach) can
+    throw away almost the whole budget: a huge early turn followed by a short
+    reply snaps past the entire first turn to the very next boundary, leaving
+    a slice that is just the reply with the question gone. Walking backward
+    instead keeps whole turns from the end for as long as they fit, and when
+    the next older turn does not fit whole, keeps a truncated tail of it
+    (rather than dropping it) so a single oversized turn is represented
+    instead of vanishing. Returns (rendered_text, turn_count_in_the_slice) -
+    the count reflects what is actually in the returned text, not the
+    pre-cut selection, since a caller checking a minimum turn count must not
+    be fooled by turns that were cut away.
+    """
     selected = list(turns[-max_turns:])
-    rendered = "\n".join(
+    rendered_full = "\n".join(
         "**{}:** {}".format("User" if role == "user" else "Assistant", text)
         for role, text in selected
     )
-    if len(rendered) <= max_chars:
-        return rendered, len(selected)
+    if len(rendered_full) <= max_chars:
+        return rendered_full, len(selected)
 
-    tentative_start = len(rendered) - max_chars
-    boundary = rendered.find("\n**", tentative_start)
-    if boundary != -1:
-        rendered = rendered[boundary + 1 :]
-    else:
-        role, text = selected[-1]
+    kept_pieces = []  # accumulated newest-first, joined and reversed at the end
+    remaining = max_chars
+    for role, text in reversed(selected):
+        piece = "**{}:** {}".format("User" if role == "user" else "Assistant", text)
+        join_cost = 1 if kept_pieces else 0  # the "\n" that will join it to what's already kept
+        if len(piece) + join_cost <= remaining:
+            kept_pieces.append(piece)
+            remaining -= len(piece) + join_cost
+            continue
+        # Doesn't fit whole. Truncate its tail into what budget is left
+        # rather than dropping the turn entirely, then stop: anything older
+        # has no room left either.
+        available = remaining - join_cost
         prefix = "**{}:** ".format("User" if role == "user" else "Assistant")
-        rendered = prefix + text[-max(0, max_chars - len(prefix)) :]
-    return rendered, len(selected)
+        if available > len(prefix):
+            kept_pieces.append(prefix + text[-(available - len(prefix)) :])
+        break
+
+    kept_pieces.reverse()
+    return "\n".join(kept_pieces), len(kept_pieces)
 
 
 # ---------------------------------------------------------------------------

@@ -101,8 +101,35 @@ read from.
 
 The vault has a second writer: Hermes has no hook system, so its own memory skill appends a
 session entry to this same file by hand at the end of a session. The `### Session (HH:MM)` plus
-five-heading shape below is a shared contract, not an implementation detail of this engine, and
-the evening compile treats an entry written either way exactly the same.
+five-heading shape is a shared contract, not an implementation detail of this engine, and the
+evening compile treats an entry written either way exactly the same. The shape is:
+
+```
+### Session (HH:MM)
+
+## Context
+
+...
+
+## Key Conversations
+
+...
+
+## Decisions
+
+...
+
+## Lessons
+
+...
+
+## To-Dos
+
+...
+```
+
+Any heading whose field was empty is omitted rather than left blank; the rest appear in this
+order.
 
 ## Knowledge base
 `knowledge/` (`index.md`, `log.md`, `concepts/`, `connections/`) is machine-written too, compiled
