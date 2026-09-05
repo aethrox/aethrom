@@ -9,3 +9,6 @@ __pycache__/
 template/daily/*.md
 template/.claude/hooks/.state/*
 !template/.claude/hooks/.state/.gitkeep
+
+# Agent worktrees, created by the harness, never part of the project
+.claude/worktrees/
