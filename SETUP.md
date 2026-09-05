@@ -165,6 +165,24 @@ echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/h
 That must print exactly one line of JSON. If it prints nothing, the hook is broken and continuity
 is silently dead, debug it now.
 
+`session-start` assembles that line from Last-Session.md, Threads.md, the first 60 lines of
+`🔮 850-{{COMPANION}}/Rules.md` (standing corrections, injected every session so nothing written
+there is ever forgotten), the journal bridge (the most recent `## ` entry of Journal.md), the first
+150 lines of `knowledge/index.md`, and the last 25 lines of today's (or, failing that, yesterday's)
+`daily/*.md` file. All of it is held to a 16,000 character budget: per-section caps run first, and
+if the total still does not fit, whole sections drop in this order: the knowledge index, then the
+daily tail, then the journal bridge, then any memory-write warning. Last-Session, Threads and Rules
+never drop, only truncate. A vault with none of the newer files (Rules.md, Journal.md,
+`knowledge/index.md`, `daily/`) still produces valid context, this is what every vault installed
+before this feature looks like.
+
+### Health check
+
+`.claude/hooks/graph_check.py` scans the vault for broken `[[wikilinks]]` and orphan notes; the
+`doctor` skill wraps it together with every other mechanical check (hooks wired, scripts import,
+daily log freshness, compile status) into one report. Point the user at "run the doctor skill" if
+memory ever seems to be silently failing.
+
 ### The daily log
 
 `SessionEnd` and `PreCompact` both hand their hook payload to `.claude/hooks/flush.py`, spawned
@@ -207,8 +225,8 @@ Then replace every placeholder in every file under the vault. Files that contain
 `🔮 850-{{COMPANION}}/*.md`, `.claude/settings.local.json` (`{{PYTHON_PATH}}`, `{{GUARD_COMMAND}}`,
 `{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}`), `.claude/backup.sh`, `.claude/semantic-memory.py`, and
 `.claude/hooks/flush.py` and `.claude/hooks/compile.py` (both carry `{{LANGUAGE}}`, inside the
-prompt each sends to `claude -p`). `hooks.py`, `_common.py` and `portalock.py` themselves carry no
-placeholders. Then verify:
+prompt each sends to `claude -p`). `hooks.py`, `_common.py`, `portalock.py` and `graph_check.py`
+themselves carry no placeholders. Then verify:
 
 ```bash
 grep -rl "{{" "{{VAULT_PATH}}" || echo "all placeholders resolved"

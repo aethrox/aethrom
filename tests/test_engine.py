@@ -23,6 +23,7 @@ import hooks  # noqa: E402
 import flush  # noqa: E402
 import portalock  # noqa: E402
 import compile  # noqa: E402
+import graph_check  # noqa: E402
 
 
 def reload_modules():
@@ -1185,6 +1186,276 @@ class TestControlPlaneGuard(CompileTestCase):
 
         self.assertEqual(self.state()["last_status"], "ok")
         self.assertTrue((self.vault / "knowledge" / "concepts" / "ok.md").exists())
+
+
+class SessionStartTestCase(VaultTestCase):
+    """VaultTestCase plus helpers for driving cmd_session_start end to end.
+
+    session-start spawns a detached catch-up compile (_spawn_catchup_compile),
+    same Windows cwd-handle problem FlushTestCase works around: a real child
+    with its cwd inside the temp vault blocks teardown's cleanup. Mock it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._popen_patcher = mock.patch("hooks.subprocess.Popen")
+        self._popen_mock = self._popen_patcher.start()
+        self.addCleanup(self._popen_patcher.stop)
+
+    def mem_dir(self):
+        mem = self.vault / "\U0001F52E 850-Aether"
+        mem.mkdir(parents=True, exist_ok=True)
+        return mem
+
+    def write_mem(self, name, text):
+        path = self.mem_dir() / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def write_index(self, text):
+        path = self.vault / "knowledge" / "index.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def write_daily(self, date_text, text):
+        path = self.vault / "daily" / "{}.md".format(date_text)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def context(self, session_id="s"):
+        raw = self.run_subcommand("session-start", session_id=session_id)
+        self.assertTrue(raw.strip(), "expected a SessionStart additionalContext line")
+        parsed = json.loads(raw.strip().splitlines()[0])
+        return parsed["hookSpecificOutput"]["additionalContext"]
+
+
+class TestPerSectionCaps(SessionStartTestCase):
+    def test_last_session_capped_others_whole(self):
+        last_session_lines = ["## Session: test"] + ["X" * 100 for _ in range(60)] + ["## Previous session"]
+        self.write_mem("Last-Session.md", "\n".join(last_session_lines))
+        self.write_mem(
+            "Threads.md",
+            "## Active Threads\n### Real Thread\n**Status:** open\n## Closed Threads\n",
+        )
+        self.write_mem("Rules.md", "Rule one.\nRule two.\n")
+
+        ctx = self.context()
+
+        self.assertIn("[note: last session truncated at {} characters".format(hooks.CAP_LAST_SESSION), ctx)
+        self.assertIn("### Real Thread", ctx)
+        self.assertIn("**Status:** open", ctx)
+        self.assertNotIn("truncated", ctx.split("[Memory - Active Threads]")[1].split("[Memory - Rules]")[0])
+        self.assertIn("Rule one.", ctx)
+        self.assertIn("Rule two.", ctx)
+
+
+class TestGlobalBudgetDropOrder(SessionStartTestCase):
+    def test_index_dropped_before_daily_and_journal_reflection_survive(self):
+        # Index: 150 short lines (~30 chars each), small enough that dropping
+        # daily alone (leaving index) would already fit under budget.
+        index_lines = ["IDX{:03d}".format(i) + "-" * 27 for i in range(150)]
+        self.write_index("\n".join(index_lines))
+
+        # Daily: last 25 lines are each huge, so dropping index alone still
+        # leaves the context over budget and daily must be dropped too.
+        today = dt.date.today().isoformat()
+        daily_lines = ["D" * 700 for _ in range(25)]
+        self.write_daily(today, "\n".join(daily_lines))
+
+        self.write_mem("Journal.md", "## Only Entry\njournal-survives-marker\n")
+        sdir = _common.state_dir()
+        (sdir / "needs_reflection.{}".format(_common.session_key("s"))).write_text(
+            "reflection-survives-marker\n"
+        )
+
+        ctx = self.context()
+
+        self.assertLessEqual(len(ctx), hooks.SESSION_CONTEXT_BUDGET)
+        self.assertNotIn("[Knowledge - Index]", ctx)
+        self.assertNotIn("[Memory - Daily Log]", ctx)
+        self.assertIn("journal-survives-marker", ctx)
+        self.assertIn("reflection-survives-marker", ctx)
+
+
+class TestNeverDroppedInvariant(SessionStartTestCase):
+    def test_last_session_threads_rules_survive_when_all_four_dropped(self):
+        self.write_mem("Last-Session.md", "## Session: test\nSurviving last session marker.\n## Previous session\n")
+        self.write_mem(
+            "Threads.md",
+            "## Active Threads\n### Surviving Thread\n**Status:** open\n## Closed Threads\n",
+        )
+        self.write_mem("Rules.md", "Surviving rule marker.\n")
+
+        index_lines = ["IDX" + "-" * 40 for _ in range(150)]
+        self.write_index("\n".join(index_lines))
+        today = dt.date.today().isoformat()
+        self.write_daily(today, "\n".join("D" * 700 for _ in range(25)))
+        self.write_mem("Journal.md", "## Entry\n" + "\n".join("J" * 200 for _ in range(9)))
+        sdir = _common.state_dir()
+        (sdir / "needs_reflection.{}".format(_common.session_key("s"))).write_text("R" * 2000 + "\n")
+
+        ctx = self.context()
+
+        self.assertLessEqual(len(ctx), hooks.SESSION_CONTEXT_BUDGET)
+        self.assertIn("Surviving last session marker.", ctx)
+        self.assertIn("### Surviving Thread", ctx)
+        self.assertIn("Surviving rule marker.", ctx)
+
+
+class TestOverflowDiagnostic(SessionStartTestCase):
+    def test_diagnostic_emitted_when_still_over_after_dropping_all_four(self):
+        sdir = _common.state_dir()
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / "backup_failed").write_text("2026-01-01\n" + "W" * 20000 + "\n", encoding="utf-8")
+
+        ctx = self.context()
+
+        self.assertEqual(ctx, hooks.SESSION_CONTEXT_DIAGNOSTIC)
+
+
+class TestRulesInjectionWindow(SessionStartTestCase):
+    def test_first_sixty_lines_only(self):
+        lines = ["L{}".format(i) for i in range(1, 71)]
+        self.write_mem("Rules.md", "\n".join(lines))
+
+        ctx = self.context()
+
+        self.assertIn("L60", ctx)
+        self.assertNotIn("L61", ctx)
+
+
+class TestJournalBridge(SessionStartTestCase):
+    def test_picks_last_entry_and_caps_at_nine_lines(self):
+        first_entry = "## 2026-01-01 First\nfirst-unique-marker\n"
+        second_lines = ["line{}".format(i) for i in range(1, 16)]
+        second_entry = "## 2026-01-02 Second\n" + "\n".join(second_lines) + "\n"
+        self.write_mem("Journal.md", first_entry + second_entry)
+
+        ctx = self.context()
+
+        self.assertIn("2026-01-02 Second", ctx)
+        self.assertIn("line9", ctx)
+        self.assertNotIn("line10", ctx)
+        self.assertNotIn("first-unique-marker", ctx)
+
+
+class TestDailyTail(SessionStartTestCase):
+    def test_prefers_today_over_yesterday(self):
+        today = dt.date.today().isoformat()
+        yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+        self.write_daily(today, "TODAYMARK\n")
+        self.write_daily(yesterday, "YESTERDAYMARK\n")
+
+        ctx = self.context()
+
+        self.assertIn("TODAYMARK", ctx)
+        self.assertNotIn("YESTERDAYMARK", ctx)
+
+    def test_falls_back_to_yesterday_when_today_missing(self):
+        yesterday = (dt.date.today() - dt.timedelta(days=1)).isoformat()
+        self.write_daily(yesterday, "YESTERDAYMARK\n")
+
+        ctx = self.context()
+
+        self.assertIn("YESTERDAYMARK", ctx)
+
+    def test_neither_file_present_emits_nothing_and_does_not_crash(self):
+        ctx = self.context()
+
+        self.assertNotIn("[Memory - Daily Log]", ctx)
+
+
+class TestKnowledgeIndexInjection(SessionStartTestCase):
+    def test_first_150_lines_only(self):
+        lines = ["L{}".format(i) for i in range(1, 161)]
+        self.write_index("\n".join(lines))
+
+        ctx = self.context()
+
+        self.assertIn("L150", ctx)
+        self.assertNotIn("L151", ctx)
+
+
+class TestThreadPatternExactness(SessionStartTestCase):
+    def test_only_exact_hermes_format_is_picked_up(self):
+        self.write_mem(
+            "Threads.md",
+            "## Active Threads\n"
+            "### Good Thread\n"
+            "**Status:** open\n"
+            "###BadThread\n"
+            "**status:** wrong-case\n"
+            "## Closed Threads\n",
+        )
+
+        ctx = self.context()
+
+        self.assertIn("### Good Thread", ctx)
+        self.assertIn("**Status:** open", ctx)
+        self.assertNotIn("BadThread", ctx)
+        self.assertNotIn("wrong-case", ctx)
+
+
+class TestBareVaultBackwardsCompat(SessionStartTestCase):
+    def test_vault_with_none_of_the_new_files_still_works(self):
+        # No Rules.md, no Journal.md, no knowledge/index.md, no daily/ at all.
+        # Every vault installed before this phase looks exactly like this.
+        ctx = self.context()
+
+        self.assertTrue(ctx.strip())
+        self.assertNotIn("[Memory - Rules]", ctx)
+        self.assertNotIn("[Memory - Journal]", ctx)
+        self.assertNotIn("[Knowledge - Index]", ctx)
+        self.assertNotIn("[Memory - Daily Log]", ctx)
+
+
+class TestGraphCheckSelftest(unittest.TestCase):
+    def test_selftest_passes(self):
+        script = HOOKS_DIR / "graph_check.py"
+        result = subprocess.run(
+            [_sys.executable, str(script), "--selftest"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("selftest: passed", result.stdout)
+
+
+class TestGraphCheckScan(unittest.TestCase):
+    def test_broken_link_code_fence_orphan_and_exempt_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.md").write_text(
+                "[[b]] and [[missing-target]]\n\n```\n[[fenced-out]]\n```\n",
+                encoding="utf-8",
+            )
+            (root / "b.md").write_text("body links nowhere\n", encoding="utf-8")
+            (root / "orphan.md").write_text("nothing links to me\n", encoding="utf-8")
+
+            skip_dir = root / ".claude"
+            skip_dir.mkdir()
+            (skip_dir / "junk.md").write_text("[[also-missing]]\n", encoding="utf-8")
+
+            exempt_dir = root / "daily"
+            exempt_dir.mkdir()
+            (exempt_dir / "2026-01-01.md").write_text("nothing links here either\n", encoding="utf-8")
+
+            total, broken, orphans = graph_check.scan(root)
+
+            targets = [target for _, target in broken]
+            self.assertIn("missing-target", targets)
+            self.assertNotIn("fenced-out", targets)
+            self.assertNotIn("also-missing", targets)
+
+            orphan_names = [str(o) for o in orphans]
+            self.assertIn("orphan.md", orphan_names)
+            self.assertNotIn(str(Path("daily") / "2026-01-01.md"), orphan_names)
+            self.assertNotIn(str(Path(".claude") / "junk.md"), orphan_names)
+            # a.md links out but nothing links to it either, so it's an orphan too.
+            self.assertIn("a.md", orphan_names)
+            self.assertNotIn("b.md", orphan_names)
 
 
 if __name__ == "__main__":

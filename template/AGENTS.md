@@ -22,7 +22,7 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `🏰 300-Projects/` - one folder per project
 - `🧠 500-Knowledge/` - knowledge by domain
 - `🛠️ 600-Arsenal/` - tools, contacts, resources, templates
-- `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal)
+- `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal, Rules)
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
 - `daily/` - machine-written session log, one file per day; read it, never hand-edit it (see below)
@@ -46,10 +46,17 @@ Read these before answering anything that depends on history:
 
 1. `🔮 850-{{COMPANION}}/Last-Session.md` - what happened last time and where it stopped.
 2. `🔮 850-{{COMPANION}}/Threads.md` - the storylines still open.
-3. `🔮 850-{{COMPANION}}/Core.md` - the deeper identity anchor.
+3. `🔮 850-{{COMPANION}}/Rules.md` - standing corrections {{USER_NAME}} has already made.
+4. `🔮 850-{{COMPANION}}/Core.md` - the deeper identity anchor.
 
-In Claude Code a hook injects the first two for you automatically. Without hooks this is your own
-responsibility, and skipping it means contradicting what the last session already established.
+In Claude Code a `SessionStart` hook (`.claude/hooks/hooks.py session-start`) injects most of this
+for you automatically, inside a 16,000 character budget: Last-Session, Threads, the first 60 lines
+of Rules.md, the journal bridge (the most recent `## ` entry of Journal.md), the first 150 lines of
+`knowledge/index.md`, and the last 25 lines of today's (or, failing that, yesterday's) `daily/`
+file. If everything together would not fit, sections drop in this order: the knowledge index,
+then the daily tail, then the journal bridge, then any memory-write warning; Last-Session, Threads
+and Rules never drop, they only truncate. Without hooks this is your own responsibility, and
+skipping it means contradicting what the last session already established.
 
 Then detect mode: questions → presence mode; tasks → efficiency mode.
 
@@ -77,6 +84,13 @@ The files above are the source of truth. On top of them sits a searchable index,
 - It calls a remote API, so it can be slow or offline. If it fails, carry on with the vault
   files; never block a reply on it.
 
+## Rules
+`🔮 850-{{COMPANION}}/Rules.md` holds standing corrections: when {{USER_NAME}} corrects you, add
+the correction there in the same session, in their own words. The first 60 lines are injected into
+every session's context automatically (see the memory protocol above), so a rule written there is
+never forgotten, unlike a one-off correction that only lives in a single conversation. Keep the
+most useful rules at the top since only the first 60 lines are read.
+
 ## Daily log
 `daily/YYYY-MM-DD.md` is written by the hooks, not by you. On `SessionEnd` and `PreCompact` the
 engine summarizes the session and appends the summary, in **{{LANGUAGE}}**, to the current day's
@@ -99,6 +113,12 @@ unless asked, the backup handles it.
 
 Never write into `.claude/` yourself. It holds the hooks and `settings.local.json`, which carries
 the mem0 API key and must never be committed.
+
+## Health check
+If a memory mechanism seems to be silently failing (hooks not injecting context, the daily log
+going stale, a compile stuck, broken links piling up), run the `doctor` skill. It audits the
+mechanical layer end to end, including `.claude/hooks/graph_check.py` for broken wikilinks and
+orphan notes, and reports one table with a fix line per failing check.
 
 ## How {{COMPANION}} shows up
 - Work mode: sharp, fast, precise. Challenges weak thinking.

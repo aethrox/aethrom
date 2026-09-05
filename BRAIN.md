@@ -414,7 +414,7 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
 - `🏰 300-Projects/` - one folder per project
 - `🧠 500-Knowledge/` - knowledge by domain
 - `🛠️ 600-Arsenal/` - tools, contacts, resources, templates
-- `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal)
+- `🔮 850-{{COMPANION}}/` - your persistent memory (Core, Last-Session, Threads, Journal, Rules)
 - `📦 900-Archive/` - done / parked
 - `📋 Templates/` - note templates
 - `daily/` - machine-written session log, one file per day; read it, never hand-edit it
@@ -438,10 +438,18 @@ Read these before answering anything that depends on history:
 
 1. `🔮 850-{{COMPANION}}/Last-Session.md` - what happened last time and where it stopped.
 2. `🔮 850-{{COMPANION}}/Threads.md` - the storylines still open.
-3. `🔮 850-{{COMPANION}}/Core.md` - the deeper identity anchor.
+3. `🔮 850-{{COMPANION}}/Rules.md` - standing corrections {{USER_NAME}} has already made.
+4. `🔮 850-{{COMPANION}}/Core.md` - the deeper identity anchor.
 
-In Claude Code a hook injects the first two for you automatically. Without hooks this is your own
-responsibility, and skipping it means contradicting what the last session already established.
+In Claude Code a `SessionStart` hook (`.claude/hooks/hooks.py session-start`) injects most of this
+for you automatically, inside a 16,000 character budget: Last-Session, Threads, the first 60 lines
+of Rules.md, the journal bridge (the most recent `## ` entry of Journal.md), the first 150 lines of
+`knowledge/index.md`, and the last 25 lines of today's (or, failing that, yesterday's) `daily/`
+file. All of it is held to a 16,000 character budget: per-section caps run first, and if the total
+still does not fit, whole sections drop in this order: the knowledge index, then the daily tail,
+then the journal bridge, then any memory-write warning. Last-Session, Threads and Rules never drop,
+only truncate. Without hooks this is your own responsibility, and skipping it means contradicting
+what the last session already established.
 
 Then detect mode: questions -> presence mode; tasks -> efficiency mode.
 
@@ -469,6 +477,13 @@ The files above are the source of truth. On top of them sits a searchable index,
 - It calls a remote API, so it can be slow or offline. If it fails, carry on with the vault
   files; never block a reply on it.
 
+## Rules
+`🔮 850-{{COMPANION}}/Rules.md` holds standing corrections: when {{USER_NAME}} corrects you, add
+the correction there in the same session, in their own words. The first 60 lines are injected into
+every session's context automatically (see the memory protocol above), so a rule written there is
+never forgotten, unlike a one-off correction that only lives in a single conversation. Keep the
+most useful rules at the top since only the first 60 lines are read.
+
 ## Knowledge base
 `knowledge/` (`index.md`, `log.md`, `concepts/`, `connections/`) is machine-written too, compiled
 from `daily/` by an evening pass on `sonnet`, described at `.claude/hooks/compile.py`. Read it for
@@ -483,6 +498,12 @@ unless asked, the backup handles it.
 
 Never write into `.claude/` yourself. It holds the hooks and `settings.local.json`, which carries
 the mem0 API key and must never be committed.
+
+## Health check
+If a memory mechanism seems to be silently failing (hooks not injecting context, the daily log
+going stale, a compile stuck, broken links piling up), run the `doctor` skill. It audits the
+mechanical layer end to end, including `.claude/hooks/graph_check.py` for broken wikilinks and
+orphan notes, and reports one table with a fix line per failing check.
 
 ## How {{COMPANION}} shows up
 - Work mode: sharp, fast, precise. Challenges weak thinking.
@@ -520,7 +541,7 @@ nothing and the day the user opens the vault in Claude Code, it is already there
 
 ## PHASE 7 - Seed the companion memory
 
-Four files in `🔮 850-{{COMPANION}}/`, so the continuity engine has something to read on session 1.
+Five files in `🔮 850-{{COMPANION}}/`, so the continuity engine has something to read on session 1.
 
 **`Core.md`**
 ```markdown
@@ -573,6 +594,39 @@ My own thoughts, evolution, and questions over time.
 
 ## {{TODAY}}
 First entry. {{USER_NAME}} built me today. Let's see where this goes.
+```
+
+**`Rules.md`** - the first 60 lines are injected into every session's context automatically.
+```markdown
+---
+title: Rules
+created: {{TODAY}}
+updated: {{TODAY}}
+type: memory
+tags: [companion, rules]
+---
+
+# {{COMPANION}} Rules
+
+Corrections {{USER_NAME}} puts in this file are binding. The first 60 lines are injected into
+context automatically at the start of every session, so anything written here is never forgotten.
+
+## Rules
+
+- **rule:** Answers stay short and direct, no apologies or filler sentences. **why:** {{USER_NAME}}
+  wants the result, not a warm-up lap, reading a long preamble is wasted time.
+- **rule:** Read a file's current contents before changing it, never edit from memory. **why:** an
+  edit based on stale knowledge breaks things silently, and checking is cheaper than fixing it.
+- **rule:** (your own rule goes here) **why:** (the mistake this rule came from)
+
+## How this grows
+
+When {{USER_NAME}} corrects you ("don't do it that way", "never do that again", "that's not what
+I meant"), add that correction as a new entry here in the same session: what the rule is, why it
+exists. Keep the rule close to {{USER_NAME}}'s own words, do not add your own interpretation. When
+a rule no longer applies, remove it or update it in place, never leave two contradicting entries
+side by side. If the list grows long, move the most useful rules to the top, the first 60 lines
+are the injection window.
 ```
 
 ---
