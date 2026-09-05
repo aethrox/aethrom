@@ -1462,6 +1462,19 @@ UPGRADE_CHECK = Path(__file__).resolve().parent.parent / "scripts" / "upgrade-ch
 REPO_TEMPLATE = Path(__file__).resolve().parent.parent / "template"
 
 
+def _load_upgrade_check():
+    """Import upgrade-check.py by path: the hyphen makes it un-importable by name."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("upgrade_check", UPGRADE_CHECK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+upgrade_check = _load_upgrade_check()
+
+
 def run_upgrade_check(vault: Path):
     result = subprocess.run(
         [_sys.executable, str(UPGRADE_CHECK), str(vault)],
@@ -1580,6 +1593,94 @@ class TestUpgradeCheck(unittest.TestCase):
     def test_usage_error_exit_code(self):
         code, _out = run_upgrade_check(Path("/does/not/exist"))
         self.assertEqual(code, 2)
+
+
+class TestCompileStripsEmDash(CompileTestCase):
+    """flush.py normalises on its write path; compile.py has its own, and for a
+    while it did not. An article carrying an em dash makes backup.sh refuse the
+    whole staged commit, so the vault stops backing up that evening and every
+    hour after, with nothing to say why.
+    """
+
+    EM_DASH = chr(0x2014)
+
+    def test_promoted_article_carries_no_em_dash(self):
+        self.write_daily("2026-02-01.md", "Talked about rate limiting.\n")
+        dashed = "# Rate Limiting\n\nA token bucket {0} refilled steadily {0} bounds bursts.\n".format(self.EM_DASH)
+
+        def mutate(stage):
+            (stage / "knowledge" / "concepts" / "rate.md").write_text(dashed, encoding="utf-8")
+            (stage / "knowledge" / "index.md").write_text(
+                "# Index\n\n| Rate {0} limiting | ... |\n".format(self.EM_DASH), encoding="utf-8"
+            )
+
+        self.run_compile(mutate=mutate)
+
+        self.assertEqual(self.state()["last_status"], "ok")
+        live = self.vault / "knowledge" / "concepts" / "rate.md"
+        self.assertTrue(live.exists())
+        body = live.read_text(encoding="utf-8")
+        self.assertNotIn(self.EM_DASH, body)
+        self.assertIn("A token bucket - refilled steadily - bounds bursts.", body)
+        self.assertNotIn(self.EM_DASH, (self.vault / "knowledge" / "index.md").read_text(encoding="utf-8"))
+
+
+class TestUpgradeCheckPlaceholders(unittest.TestCase):
+    """An installed vault never matches the template byte for byte, because
+    install resolves {{LANGUAGE}} and friends. Reporting that as a difference
+    would send a user to copy the unresolved template over a working vault.
+    """
+
+    def _pair(self, tmp, template_body, vault_body):
+        t = Path(tmp) / "t.py"
+        v = Path(tmp) / "v.py"
+        t.write_text(template_body, encoding="utf-8")
+        v.write_text(vault_body, encoding="utf-8")
+        return t, v
+
+    def test_resolved_placeholder_is_not_a_difference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            t, v = self._pair(
+                tmp,
+                'LANG = "{{LANGUAGE}}"\nBODY = "unchanged"\n',
+                'LANG = "English"\nBODY = "unchanged"\n',
+            )
+            self.assertTrue(upgrade_check.only_placeholders_differ(t, v))
+
+    def test_real_edit_is_still_a_difference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            t, v = self._pair(
+                tmp,
+                'LANG = "{{LANGUAGE}}"\nBODY = "unchanged"\n',
+                'LANG = "English"\nBODY = "edited by hand"\n',
+            )
+            self.assertFalse(upgrade_check.only_placeholders_differ(t, v))
+
+    def test_added_line_is_still_a_difference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            t, v = self._pair(
+                tmp,
+                'LANG = "{{LANGUAGE}}"\n',
+                'LANG = "English"\nEXTRA = 1\n',
+            )
+            self.assertFalse(upgrade_check.only_placeholders_differ(t, v))
+
+    def test_identical_files_without_placeholders_are_not_excused(self):
+        # No placeholder means there is nothing to excuse; the caller only asks
+        # this question when the bytes already differ.
+        with tempfile.TemporaryDirectory() as tmp:
+            t, v = self._pair(tmp, "A = 1\n", "A = 1\n")
+            self.assertFalse(upgrade_check.only_placeholders_differ(t, v))
+
+    def test_bytecode_is_never_compared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "tree"
+            (root / "__pycache__").mkdir(parents=True)
+            (root / "keep.py").write_text("x = 1\n", encoding="utf-8")
+            (root / "__pycache__" / "keep.cpython-311.pyc").write_bytes(b"\x00bytecode")
+            (root / "stray.pyc").write_bytes(b"\x00bytecode")
+            found = {p.name for p in upgrade_check.iter_files(root)}
+            self.assertEqual(found, {"keep.py"})
 
 
 if __name__ == "__main__":

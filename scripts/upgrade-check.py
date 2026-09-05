@@ -45,8 +45,40 @@ def iter_files(root: Path):
     if not root.is_dir():
         return
     for p in sorted(root.rglob("*")):
-        if p.is_file() and ".state" not in p.relative_to(root).parts and p.name != "__pycache__":
-            yield p
+        parts = p.relative_to(root).parts
+        # .state is local runtime state, __pycache__ is bytecode either side may
+        # or may not have written. Comparing either produces noise that reads
+        # like a real difference.
+        if not p.is_file() or ".state" in parts or "__pycache__" in parts:
+            continue
+        if p.suffix == ".pyc":
+            continue
+        yield p
+
+
+def only_placeholders_differ(template_file: Path, vault_file: Path) -> bool:
+    """True when the two files differ only where the installer resolved a placeholder.
+
+    Substitution replaces {{NAME}} inside a line and never adds or removes a
+    line, so the two files must have the same number of lines, and every
+    template line that carries no placeholder must match its counterpart
+    exactly. Any other difference is a real one and gets reported.
+    """
+    try:
+        template_lines = template_file.read_text(encoding="utf-8").splitlines()
+        vault_lines = vault_file.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return False
+    if len(template_lines) != len(vault_lines):
+        return False
+    saw_placeholder = False
+    for template_line, vault_line in zip(template_lines, vault_lines):
+        if "{{" in template_line:
+            saw_placeholder = True
+            continue
+        if template_line != vault_line:
+            return False
+    return saw_placeholder
 
 
 def find_memory_folder(vault: Path) -> Path | None:
@@ -81,6 +113,11 @@ def main(argv: list[str]) -> int:
         todo = True
 
     # 2. Engine and skill files: differ / missing / new. These are code, replace wholesale.
+    #    An installed vault never matches the template byte for byte: install
+    #    resolves {{LANGUAGE}}, {{COMPANION}} and friends inside several engine
+    #    files. Reporting those as differing would be worse than useless, since
+    #    acting on the report would copy the unresolved template back over a
+    #    working vault. only_placeholders_differ tells the two apart.
     print("\n[engine/skills] code files (replace wholesale, never the files below under Leftovers):")
     any_code_change = False
     for tree in COMPARE_TREES:
@@ -93,7 +130,7 @@ def main(argv: list[str]) -> int:
             if vf is None:
                 print(f"  missing: {tree}/{rel.as_posix()}")
                 any_code_change = True
-            elif vf.read_bytes() != tpl_f.read_bytes():
+            elif vf.read_bytes() != tpl_f.read_bytes() and not only_placeholders_differ(tpl_f, vf):
                 print(f"  differs: {tree}/{rel.as_posix()}")
                 any_code_change = True
         for rel in vault_files:

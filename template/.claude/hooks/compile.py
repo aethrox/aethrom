@@ -43,6 +43,10 @@ DATE_IN_NAME = re.compile(
 )
 TRIGGER_NAME = re.compile(r"compile-trigger-\d{4}-\d{2}-\d{2}\Z")
 
+# U+2014, as bytes, because promotion copies files rather than text. See
+# _atomic_copy for why the compiler has to strip these.
+EM_DASH_BYTES = chr(0x2014).encode("utf-8")  # the em dash, spelled without writing one
+
 # Same shape as flush.py's scan: a line that looks like an instruction addressed
 # to the model, in English or Turkish. Here it never blocks a compile either,
 # it only marks the run as worth a human look, since the real boundary is the
@@ -554,8 +558,15 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     )
     temporary = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "wb") as target, source.open("rb") as source_file:
-            shutil.copyfileobj(source_file, target)
+        # Em dashes are stripped here, on the one path by which anything this
+        # compiler produced reaches the live vault. backup.sh refuses to commit
+        # a file containing one, and it refuses the whole staged change, not
+        # just that file. An article written at 18:00 would therefore stop the
+        # hourly backup that night and every hour after it, silently, until
+        # somebody went looking. flush.py does the same on its own write path.
+        body = source.read_bytes().replace(EM_DASH_BYTES, b"-")
+        with os.fdopen(descriptor, "wb") as target:
+            target.write(body)
             target.flush()
             os.fsync(target.fileno())
         try:
