@@ -285,6 +285,15 @@ class FlushTestCase(VaultTestCase):
         )
         self._claude_mock = self._claude_patcher.start()
         self.addCleanup(self._claude_patcher.stop)
+        # A successful flush calls maybe_trigger_compile, which spawns a real
+        # detached compile.py with its cwd inside the temp vault. On Windows a
+        # process holding a directory as its cwd blocks that directory from
+        # being removed, so tearDown's cleanup fails and the test errors out
+        # with a PermissionError that has nothing to do with what it asserts.
+        # Tests spawn no real children.
+        self._popen_patcher = mock.patch("flush.subprocess.Popen")
+        self._popen_mock = self._popen_patcher.start()
+        self.addCleanup(self._popen_patcher.stop)
 
     def run_flush(self, session_id, turns, reason="sessionend", hook_input_name="hookin-test.json"):
         transcript_path = self.vault / "transcript.jsonl"
