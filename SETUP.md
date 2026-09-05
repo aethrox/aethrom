@@ -170,10 +170,14 @@ is silently dead, debug it now.
 `SessionEnd` and `PreCompact` both hand their hook payload to `.claude/hooks/flush.py`, spawned
 detached so the hook returns immediately: the payload is written to a short-lived file in
 `.claude/hooks/.state/` (the detached child has no inherited stdin), then `flush.py` runs against
-it without the hook waiting. It reads the transcript, trims it to a bounded window, and appends an
-entry to `{{VAULT_PATH}}/daily/YYYY-MM-DD.md`, creating that file with a small skeleton on first
-write. `PreCompact` runs the same path just before a context compaction, so a long session is not
-lost to the compaction boundary. `daily/` is machine-written: read it, never hand-edit it.
+it without the hook waiting. It reads the transcript, trims it to a bounded window, and calls
+`claude -p --model haiku` to turn that window into a five-field summary written in `{{LANGUAGE}}`,
+which it appends to `{{VAULT_PATH}}/daily/YYYY-MM-DD.md`, creating that file with a small skeleton
+on first write. This summarization call runs on haiku and costs a small amount per session. If the
+call fails, `flush.py` falls back to the raw transcript slice under a note naming the error, so a
+session is never silently lost. `PreCompact` runs the same path just before a context compaction,
+so a long session is not lost to the compaction boundary. `daily/` is machine-written: read it,
+never hand-edit it.
 
 ---
 
@@ -187,8 +191,9 @@ the emoji and the `850-` prefix exactly; only the name after the dash changes.
 Then replace every placeholder in every file under the vault. Files that contain them:
 `AGENTS.md`, `CLAUDE.md`, `🎯 100-Command-Center/Dashboard.md`, all of
 `🔮 850-{{COMPANION}}/*.md`, `.claude/settings.local.json` (`{{PYTHON_PATH}}`, `{{GUARD_COMMAND}}`,
-`{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}`), `.claude/backup.sh`, and `.claude/semantic-memory.py`. `hooks.py` and
-`_common.py` themselves carry no placeholders. Then verify:
+`{{GUARD_ARG1}}`, `{{GUARD_SCRIPT}}`), `.claude/backup.sh`, `.claude/semantic-memory.py`, and
+`.claude/hooks/flush.py` (`{{LANGUAGE}}`, inside the summarization prompt it sends to `claude -p`).
+`hooks.py` and `_common.py` themselves carry no placeholders. Then verify:
 
 ```bash
 grep -rl "{{" "{{VAULT_PATH}}" || echo "all placeholders resolved"

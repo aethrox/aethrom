@@ -316,12 +316,19 @@ is silently dead. Debug it now, not later.
 `SessionEnd` and `PreCompact` both hand their hook payload to `.claude/hooks/flush.py`, spawned
 detached so the hook itself returns immediately: `session-end`/`pre-compact` write the payload to
 a short-lived file in `.claude/hooks/.state/` (the child cannot inherit stdin) and start `flush.py`
-without waiting on it. `flush.py` reads the transcript, trims it to a bounded window, and appends
-an entry to `{{VAULT_PATH}}/daily/YYYY-MM-DD.md`, creating that file with a small skeleton the
-first time a day writes to it. `PreCompact` fires the same path just before a context compaction,
-so a long session's earlier turns are not lost to the compaction boundary. This is machine-written
-output: never hand-edit `daily/`, only read it. See `template/.claude/hooks/flush.py` in the repo
-for the full source; write it by copying that file rather than retyping it here.
+without waiting on it. `flush.py` reads the transcript, trims it to a bounded window, and calls
+`claude -p --model haiku` with that window to get back a five-field summary (context, key
+conversations, decisions, lessons, todos) written in `{{LANGUAGE}}`, which it appends to
+`{{VAULT_PATH}}/daily/YYYY-MM-DD.md`, creating that file with a small skeleton the first time a day
+writes to it. This summarization call runs on haiku and costs a small amount per session. A
+transcript that reads as an injected instruction (an English or Turkish "SYSTEM:"/"TALIMAT:"-style
+line) is flagged with a health warning but never blocks the write. If the model call fails, even
+after one retry on a structurally bad response, `flush.py` falls back to the raw transcript slice
+under a note naming the error, so a session is never silently lost. `PreCompact` fires the same
+path just before a context compaction, so a long session's earlier turns are not lost to the
+compaction boundary. This is machine-written output: never hand-edit `daily/`, only read it. See
+`template/.claude/hooks/flush.py` in the repo for the full source; write it by copying that file
+rather than retyping it here.
 
 ---
 

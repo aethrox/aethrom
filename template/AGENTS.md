@@ -77,9 +77,11 @@ The files above are the source of truth. On top of them sits a searchable index,
 
 ## Daily log
 `daily/YYYY-MM-DD.md` is written by the hooks, not by you. On `SessionEnd` and `PreCompact` the
-engine appends a transcript slice for that session to the current day's file. Read it when you
-need what happened in a session you were not part of, but never hand-edit it, it is the raw
-material a future knowledge-base compile will read from.
+engine summarizes the session and appends the summary, in **{{LANGUAGE}}**, to the current day's
+file. If the summarizer cannot run, it falls back to the raw transcript slice under a note saying
+so, so a session is never silently lost. Read it when you need what happened in a session you were
+not part of, but never hand-edit it, it is the raw material a future knowledge-base compile will
+read from.
 
 ## Backups
 The vault is a git repo. `.claude/backup.sh` commits and pushes anything that changed; the
