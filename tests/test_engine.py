@@ -421,8 +421,14 @@ class TestReadTranscript(FlushTestCase):
 
 
 class TestMinimumTurns(FlushTestCase):
-    def test_sessionend_writes_with_one_turn(self):
-        self.run_flush("s1", [("user", "hi")], reason="sessionend")
+    def test_sessionend_below_four_turns_writes_nothing(self):
+        turns = [("user", "hi"), ("assistant", "yo"), ("user", "thanks")]
+        self.run_flush("s1", turns, reason="sessionend")
+        self.assertFalse(self.daily_path().exists())
+
+    def test_sessionend_writes_with_four_turns(self):
+        turns = [("user", "hi"), ("assistant", "yo"), ("user", "thanks"), ("assistant", "sure")]
+        self.run_flush("s1b", turns, reason="sessionend")
         self.assertTrue(self.daily_path().exists())
 
     def test_precompact_needs_five_turns(self):

@@ -2,23 +2,23 @@
   "hooks": {
     "SessionStart": [
       { "hooks": [
-        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-start"], "timeout": 15 },
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["-S", "${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-start"], "timeout": 15 },
         { "type": "command", "command": "{{GUARD_COMMAND}}", "args": ["{{GUARD_ARG1}}", "{{GUARD_SCRIPT}}", "{{PYTHON_PATH}}"], "timeout": 5 }
       ] }
     ],
     "UserPromptSubmit": [
       { "hooks": [
-        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "prompt-counter"], "timeout": 10 }
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["-S", "${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "prompt-counter"], "timeout": 10 }
       ] }
     ],
     "SessionEnd": [
       { "hooks": [
-        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-end"], "timeout": 10 }
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["-S", "${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-end"], "timeout": 10 }
       ] }
     ],
     "PreCompact": [
       { "hooks": [
-        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "pre-compact"], "timeout": 10 }
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["-S", "${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "pre-compact"], "timeout": 10 }
       ] }
     ]
   }

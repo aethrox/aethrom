@@ -708,7 +708,12 @@ def _flush_once(hook_input_path: Path, reason: str, state_dir: Path, vault_root:
             write_health(state_dir, "transcript-parse-degraded", warning=True)
 
         transcript_text, turn_count = format_turns(turns)
-        minimum_turns = 5 if reason == "precompact" else 1
+        # A session too short to have said anything is not worth a summarization
+        # call or a permanent daily entry: measured against a real 194-session
+        # history, a threshold of 1 fired on every single session, and the
+        # shortest of them were "what is the git status" exchanges that then had
+        # to be carried through the compiler into the knowledge base as noise.
+        minimum_turns = 5 if reason == "precompact" else 4
         if turn_count < minimum_turns:
             _write_flush_state(state_dir, session_id, now_epoch, "ok", "below-minimum-turns")
             write_health(state_dir, "ok")

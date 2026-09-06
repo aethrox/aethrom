@@ -49,13 +49,14 @@ send to someone who does not have access here.
 
 ## How it works
 
-Continuity is four markdown files and a protocol. `Core.md`, `Last-Session.md`, `Threads.md` and
-`Journal.md` live in a folder named after your companion, `🔮 850-Aether/` for Aether, and
-`AGENTS.md` tells the agent to read them when a session opens and write them back before it ends.
-Nothing there is specific to any one agent.
+Continuity is five markdown files and a protocol. `Core.md`, `Last-Session.md`, `Threads.md`,
+`Rules.md` and `Journal.md` live in a folder named after your companion, `🔮 850-Aether/` for
+Aether, and `AGENTS.md` tells the agent to read them when a session opens and write them back
+before it ends. Nothing there is specific to any one agent. The hook injects four of them;
+`Core.md` is the one the agent opens itself, because it is identity rather than state.
 
 In Claude Code a single Python dispatcher, `hooks.py`, makes that automatic rather than voluntary.
-Claude Code invokes it directly (`{{PYTHON_PATH}} hooks.py <subcommand>`, no shell, no shebang) on
+Claude Code invokes it directly (`{{PYTHON_PATH}} -S hooks.py <subcommand>`, no shell, no shebang) on
 four events. On `SessionStart` it reads `Last-Session.md`, `Threads.md`, the first 60 lines of
 `Rules.md`, the journal bridge, the knowledge index and the daily log tail, and injects all of it
 as context inside a fixed character budget, so the model opens every session knowing where the
@@ -145,10 +146,12 @@ Verified means it was actually executed on that platform, not reasoned about. Wh
 
 - **Python, standard library only.** The engine (`hooks.py`, `flush.py`, `compile.py`,
   `graph_check.py`, `portalock.py`) is Python 3.7+ with no third-party dependency, works on
-  Python 3.7 through current, and is invoked directly (`{{PYTHON_PATH}}` and the script path as
-  arguments, no shell, no shebang), so the same file runs identically on Windows, Linux and macOS.
-  This is a hard dependency now: a vault with no working Python interpreter gets no automatic
-  memory at all, only the `guard.sh` / `guard.cmd` warning on `SessionStart`.
+  Python 3.7 through current, and is invoked directly (`{{PYTHON_PATH}}` with `-S` and the
+  script path as arguments, no shell, no shebang), so the same file runs identically on Windows,
+  Linux and macOS. This is a hard dependency now: a vault with no working Python interpreter gets
+  no automatic memory at all, only the `guard.sh` / `guard.cmd` warning on `SessionStart`. Having
+  no third-party dependency is also what makes `-S` safe, and `-S` is worth roughly 15 ms of
+  interpreter startup on every hook invocation.
 - **Finding a Python that actually runs.** Presence on PATH is not enough: on Windows, `python3`
   can resolve to a Microsoft Store stub that exists on PATH and fails the moment it runs, while
   `python` works. SETUP.md runs each candidate rather than checking for it, and the `doctor` skill
