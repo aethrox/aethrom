@@ -28,11 +28,19 @@ ORPHAN_EXEMPT_PATHS = {
     "SETUP.md",
     "SETUP-WINDOWS.md",
     "\U0001F3AF 100-Command-Center/Dashboard.md",
-    "\U0001F52E 850-Companion/Journal.md",
-    "\U0001F52E 850-Companion/Rules.md",
-    "\U0001F52E 850-Companion/Threads.md",
-    "\U0001F52E 850-Companion/Last-Session.md",
-    "\U0001F52E 850-Companion/Core.md",
+}
+# The memory files cannot be listed above. The install step renames their folder
+# to '\U0001F52E 850-{{COMPANION}}', so a fixed path matches the template and no real
+# vault: listing '850-Companion' here reported every real vault's five memory
+# files as orphans, while the doctor skill told the user they were exempt.
+# _common.memory_dir() globs the prefix for exactly this reason.
+MEMORY_DIR_PREFIX = "\U0001F52E 850-"
+MEMORY_FILES = {
+    "Core.md",
+    "Journal.md",
+    "Last-Session.md",
+    "Rules.md",
+    "Threads.md",
 }
 # --------------------------------------------------------------------------------
 
@@ -147,6 +155,17 @@ def _resolve(
     return candidates
 
 
+def _is_memory_file(relative: str) -> bool:
+    """True for a companion memory file, whatever the companion is called.
+
+    These are injected into every session, so nothing needs to link to them.
+    Matched on the folder prefix rather than a fixed name, because the folder
+    carries the companion's name after install.
+    """
+    head, _, tail = relative.partition("/")
+    return head.startswith(MEMORY_DIR_PREFIX) and tail in MEMORY_FILES
+
+
 def scan(root: Path):
     """Return (scanned Markdown count, broken links, orphan notes)."""
     root = root.resolve()
@@ -189,6 +208,7 @@ def scan(root: Path):
             for part in path.relative_to(root).parts
         )
         and path.relative_to(root).as_posix() not in ORPHAN_EXEMPT_PATHS
+        and not _is_memory_file(path.relative_to(root).as_posix())
     ]
     return len(notes), broken, sorted(
         orphans, key=lambda item: str(item).casefold()

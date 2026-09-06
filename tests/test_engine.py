@@ -1717,6 +1717,26 @@ class TestGraphCheckScan(unittest.TestCase):
             self.assertIn("a.md", orphan_names)
             self.assertNotIn("b.md", orphan_names)
 
+    def test_memory_files_are_exempt_under_the_renamed_companion_folder(self):
+        # Install renames the memory folder to the companion's name, so the real
+        # folder is never '850-Companion'. A fixed path reported all five files
+        # as orphans on every real vault while the doctor skill said otherwise.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            memory = root / "\U0001F52E 850-Aether"
+            memory.mkdir()
+            for name in ("Core.md", "Journal.md", "Last-Session.md", "Rules.md", "Threads.md"):
+                (memory / name).write_text("nothing links here\n", encoding="utf-8")
+            (memory / "Scratch.md").write_text("not a memory file\n", encoding="utf-8")
+
+            _, _, orphans = graph_check.scan(root)
+
+            orphan_names = [str(o) for o in orphans]
+            for name in ("Core.md", "Journal.md", "Last-Session.md", "Rules.md", "Threads.md"):
+                self.assertNotIn(str(Path("\U0001F52E 850-Aether") / name), orphan_names)
+            # Only the five injected files are exempt, not the whole folder.
+            self.assertIn(str(Path("\U0001F52E 850-Aether") / "Scratch.md"), orphan_names)
+
 
 UPGRADE_CHECK = Path(__file__).resolve().parent.parent / "scripts" / "upgrade-check.py"
 REPO_TEMPLATE = Path(__file__).resolve().parent.parent / "template"
