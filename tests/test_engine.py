@@ -1737,6 +1737,29 @@ class TestGraphCheckScan(unittest.TestCase):
             # Only the five injected files are exempt, not the whole folder.
             self.assertIn(str(Path("\U0001F52E 850-Aether") / "Scratch.md"), orphan_names)
 
+    def test_archive_is_a_link_target_but_never_a_source(self):
+        # The archive is parked vault content, not machinery, and linking to a
+        # parked note is normal. Excluding it from the target index reported
+        # every such link as broken while the note sat right there.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "\U0001F4E6 900-Archive"
+            archive.mkdir()
+            (archive / "retired.md").write_text("[[dangling-from-archive]]\n", encoding="utf-8")
+            (root / "hub.md").write_text("[[retired]] and [[b]]\n", encoding="utf-8")
+            (root / "b.md").write_text("body\n", encoding="utf-8")
+
+            total, broken, orphans = graph_check.scan(root)
+
+            targets = [target for _, target in broken]
+            # The link into the archive resolves.
+            self.assertNotIn("retired", targets)
+            # The archive's own links are not scanned, so its dangling one is silent.
+            self.assertNotIn("dangling-from-archive", targets)
+            # And an archived note is never counted as a note or an orphan.
+            self.assertEqual(total, 2)
+            self.assertNotIn(str(Path("\U0001F4E6 900-Archive") / "retired.md"), [str(o) for o in orphans])
+
 
 UPGRADE_CHECK = Path(__file__).resolve().parent.parent / "scripts" / "upgrade-check.py"
 REPO_TEMPLATE = Path(__file__).resolve().parent.parent / "template"

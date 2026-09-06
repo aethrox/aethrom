@@ -17,8 +17,13 @@ SKIP_DIRS = {
     ".claude",
     ".obsidian",
     "node_modules",
-    "\U0001F4E6 900-Archive",  # 900-Archive
 }
+# The archive is vault content, not machinery: 'done / parked', in AGENTS.md's
+# words, and linking to a parked note is normal (the Dashboard does it). So it
+# is skipped as a source, its own links are not scanned and its notes are never
+# orphan candidates, but it stays in the target index. Skipping it there too
+# reported every link into the archive as broken while the note sat right there.
+TARGET_ONLY_DIRS = {"\U0001F4E6 900-Archive"}  # 900-Archive
 ORPHAN_EXEMPT_DIRS = {"\U0001F4CB Templates", "daily", "knowledge"}  # Templates
 ORPHAN_EXEMPT_PATHS = {
     "README.md",
@@ -65,6 +70,15 @@ def _is_skipped(path: Path, root: Path) -> bool:
     return any(part in SKIP_DIRS for part in parts)
 
 
+def _is_target_only(path: Path, root: Path) -> bool:
+    """True for a file that may be linked to but is never scanned itself."""
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return False
+    return any(part in TARGET_ONLY_DIRS for part in parts)
+
+
 def _wikilink_text(text: str) -> str:
     """Remove regions where Obsidian does not create graph edges."""
     text = OBSIDIAN_COMMENT.sub("", text)
@@ -105,7 +119,7 @@ def _find_files(root: Path) -> tuple[list[Path], list[Path]]:
         if not is_file:
             continue
         all_files.append(path)
-        if path.suffix.casefold() == ".md":
+        if path.suffix.casefold() == ".md" and not _is_target_only(path, root):
             notes.append(path)
     return all_files, notes
 
