@@ -240,8 +240,10 @@ copy is wired correctly, not enough to rebuild it from scratch.
   `prompt_count.<key>`, `needs_reflection.<key>`) is keyed by a sha256 of the session id, so two
   concurrent Claude sessions in the same vault never corrupt each other's prompt counters.
 - **Exec form, no shell, no shebang.** Claude Code invokes `{{PYTHON_PATH}}` directly with
-  `hooks.py` as an argument. Nothing depends on execute bits or `#!` lines, so it behaves
-  identically on Windows, Linux and macOS.
+  `-S` and `hooks.py` as arguments. Nothing depends on execute bits or `#!` lines, so it behaves
+  identically on Windows, Linux and macOS. `-S` skips `site` initialization, which the engine
+  never needs (standard library only) and which costs roughly 15 ms of interpreter startup on
+  every hook invocation.
 - **A guard fallback sits on `SessionStart` alone**, not on every hook (see `SETUP.md`, and
   `settings.json`'s `SessionStart` block, which is the only one with a second hook entry).
   `guard.sh` / `guard.cmd` actually run the configured interpreter; if it fails, they print one
@@ -326,30 +328,30 @@ Copy both `SKILL.md` files from `template/.claude/skills/doctor/` and
 ## PHASE 5 - Wire the hooks (Claude Code only)
 
 Write `{{VAULT_PATH}}/.claude/settings.local.json`. It is the same file on every platform: one
-Python dispatcher entry on each of the three events, plus one guard entry on `SessionStart`.
+Python dispatcher entry on each of the four events, plus one guard entry on `SessionStart`.
 
 ```json
 {
   "hooks": {
     "SessionStart": [
       { "hooks": [
-        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-start"], "timeout": 15 },
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["-S", "${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-start"], "timeout": 15 },
         { "type": "command", "command": "{{GUARD_COMMAND}}", "args": ["{{GUARD_ARG1}}", "{{GUARD_SCRIPT}}", "{{PYTHON_PATH}}"], "timeout": 5 }
       ] }
     ],
     "UserPromptSubmit": [
       { "hooks": [
-        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "prompt-counter"], "timeout": 10 }
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["-S", "${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "prompt-counter"], "timeout": 10 }
       ] }
     ],
     "SessionEnd": [
       { "hooks": [
-        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-end"], "timeout": 10 }
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["-S", "${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "session-end"], "timeout": 10 }
       ] }
     ],
     "PreCompact": [
       { "hooks": [
-        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "pre-compact"], "timeout": 10 }
+        { "type": "command", "command": "{{PYTHON_PATH}}", "args": ["-S", "${CLAUDE_PROJECT_DIR}/.claude/hooks/hooks.py", "pre-compact"], "timeout": 10 }
       ] }
     ]
   }
@@ -365,7 +367,7 @@ platforms on the same three-slot argument shape, so the file stays valid JSON.
 Now **run the dispatcher by hand** and confirm the output before moving on:
 
 ```bash
-echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start
+echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" -S "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start
 ```
 
 That must print exactly one line of JSON. If it prints nothing, the hook is broken and continuity
@@ -1043,7 +1045,7 @@ If you built the hooks, check them too:
 
 ```bash
 ls -la "{{VAULT_PATH}}/.claude/hooks/"                        # hooks.py, _common.py, guard.sh, guard.cmd
-echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start  # one line of JSON
+echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" -S "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start  # one line of JSON
 ```
 
 Then report to the user, in `{{LANGUAGE}}`:

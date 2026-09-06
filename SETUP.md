@@ -122,8 +122,11 @@ existing destination instead of copying the contents out. Check afterwards that 
 at the vault root and there is no `template` directory under it.
 
 Nothing here needs `chmod +x`. The hooks are invoked in exec form (`{{PYTHON_PATH}}` with
-`hooks.py` as an argument, `sh`/`cmd` with `guard.sh`/`guard.cmd` as an argument), so no shebang
-or execute bit is ever relied on, on any platform.
+`-S` and `hooks.py` as arguments, `sh`/`cmd` with `guard.sh`/`guard.cmd` as an argument), so no
+shebang or execute bit is ever relied on, on any platform. The `-S` is a startup saving, not a
+preference: the engine imports nothing outside the standard library, so skipping `site`
+initialization cuts roughly 15 ms off every hook invocation and changes the output not at all.
+Keep it in front of the script path in all four entries.
 
 Create only the optional scope folders the user picked:
 `⚔️ 200-Goals` · `🔐 400-Vault` · `💪 700-Body` · `🧘 800-Mind`
@@ -159,7 +162,7 @@ exec form. Rename it to
 Then **run each subcommand by hand** and confirm the output before moving on:
 
 ```bash
-echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start
+echo '{"session_id":"test"}' | "{{PYTHON_PATH}}" -S "{{VAULT_PATH}}/.claude/hooks/hooks.py" session-start
 ```
 
 That must print exactly one line of JSON. If it prints nothing, the hook is broken and continuity
