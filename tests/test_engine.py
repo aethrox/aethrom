@@ -420,6 +420,39 @@ class TestReadTranscript(FlushTestCase):
         self.assertTrue(degraded)
 
 
+class TestMissingTranscript(FlushTestCase):
+    def test_absent_transcript_is_ok_not_an_engine_error(self):
+        # Seen on a real vault: a session ended having never written a
+        # transcript, and the health channel recorded 'input:[Errno 2] ...',
+        # which the doctor skill reports as an engine failure.
+        hook_input_path = _common.state_dir() / "hookin-missing.json"
+        _write_hook_input(hook_input_path, "no-transcript", self.vault / "never-written.jsonl")
+
+        flush.main(["--hook-input", str(hook_input_path), "--reason", "sessionend"])
+
+        self.assertFalse(self.daily_path().exists())
+        self.assertEqual(self.health()["error"], "ok")
+        state = json.loads(
+            flush._session_state_path(_common.state_dir(), "no-transcript").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(state["status"], "ok")
+        self.assertEqual(state["detail"], "no-transcript")
+
+    def test_an_unreadable_transcript_is_still_an_error(self):
+        # The narrow case above must not swallow a real fault: a path that
+        # exists but cannot be parsed as a transcript still has to be visible.
+        hook_input_path = _common.state_dir() / "hookin-unreadable.json"
+        directory_not_a_file = self.vault / "not-a-transcript.jsonl"
+        directory_not_a_file.mkdir()
+        _write_hook_input(hook_input_path, "unreadable", directory_not_a_file)
+
+        flush.main(["--hook-input", str(hook_input_path), "--reason", "sessionend"])
+
+        self.assertNotEqual(self.health()["error"], "ok")
+
+
 class TestMinimumTurns(FlushTestCase):
     def test_sessionend_below_four_turns_writes_nothing(self):
         turns = [("user", "hi"), ("assistant", "yo"), ("user", "thanks")]
