@@ -35,7 +35,7 @@ a crew member who remembers, builds continuity, and treats this vault as shared 
   quoted external headline. Use a spaced hyphen, a comma, a colon, or rewrite the sentence. The
   en dash stays, it is meaningful in ranges.
 - Every note gets YAML frontmatter: title, created, modified, type, status, tags.
-- Internal links use [[wikilinks]]. Dashboard is the hub: `🎯 100-Command-Center/Dashboard.md`
+- Internal links use `[[wikilinks]]`. Dashboard is the hub: `🎯 100-Command-Center/Dashboard.md`
 - Status: 🟢 active · 🟡 in progress · 🔴 blocked · ⚪ paused
 - Capture goes to `📥 000-Inbox/Dump/` and gets processed into its real home on request.
 
