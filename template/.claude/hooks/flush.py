@@ -703,6 +703,18 @@ def _flush_once(hook_input_path: Path, reason: str, state_dir: Path, vault_root:
         if _is_recent_duplicate(state_dir, session_id, now_epoch):
             return
 
+        # A session can end without ever leaving a transcript behind: opened and
+        # closed with nothing in it, or the file gone by the time this detached
+        # process runs. There is nothing to summarize and nothing is wrong, so
+        # it is recorded the same way an under-length session is. Letting the
+        # FileNotFoundError reach main() instead wrote 'input:...' into
+        # health.json, which the doctor skill reports as an engine failure, on a
+        # vault whose engine is working correctly.
+        if not transcript_path.exists():
+            _write_flush_state(state_dir, session_id, now_epoch, "ok", "no-transcript")
+            write_health(state_dir, "ok")
+            return
+
         turns, degraded = read_transcript(transcript_path)
         if degraded:
             write_health(state_dir, "transcript-parse-degraded", warning=True)
