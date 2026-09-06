@@ -278,8 +278,12 @@ Fix: `git init` and an initial commit if there is no repo. Commit if changes hav
 ### 13. Rules file present
 
 ```bash
-if [ -f "🔮 850-Companion/Rules.md" ]; then echo "rules: present, $(wc -l < "🔮 850-Companion/Rules.md" | tr -d ' ') lines"; else echo "rules: MISSING"; fi
+r=$(ls "🔮 850-"*/Rules.md 2>/dev/null | head -1)
+if [ -n "$r" ]; then echo "rules: present, $(wc -l < "$r" | tr -d ' ') lines"; else echo "rules: MISSING"; fi
 ```
+
+The folder is globbed, never named. Install renames it to the companion's name, so
+a check written against `🔮 850-Companion/` reports MISSING on every real vault.
 
 Green: present. Yellow: missing, the user's corrections are not becoming durable.
 Fix: copy the seed `Rules.md` from the repo into the companion memory folder.
