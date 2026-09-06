@@ -12,3 +12,8 @@ template/.claude/hooks/.state/*
 
 # Agent worktrees, created by the harness, never part of the project
 .claude/worktrees/
+
+# Secrets must never be committed
+.claude/settings.local.json
+*.env
+.env.*
