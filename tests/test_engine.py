@@ -641,6 +641,26 @@ class TestNothingToRecord(FlushTestCase):
         self.assertEqual(self.health()["error"], "ok")
 
 
+class TestClaudeExitReason(unittest.TestCase):
+    def test_uses_the_cli_message_when_there_is_one(self):
+        reason = _common.claude_exit_reason(
+            1, json.dumps({"result": "Failed to authenticate: token expired"})
+        )
+        self.assertEqual(reason, "claude-exit-1:Failed to authenticate: token expired")
+
+    def test_falls_back_to_the_bare_code(self):
+        for stdout in ("", "not json at all", json.dumps([1, 2]), json.dumps({"result": "   "})):
+            self.assertEqual(_common.claude_exit_reason(7, stdout), "claude-exit-7")
+
+    def test_flattens_and_caps_so_one_line_stays_one_line(self):
+        # This string lands in a JSON health record and in a single Markdown
+        # line, and a multi-line or unbounded message wrecks both.
+        noisy = "a\n\nb   c " + "x" * 200
+        reason = _common.claude_exit_reason(1, json.dumps({"result": noisy}))
+        self.assertNotIn("\n", reason)
+        self.assertEqual(len(reason.split(":", 1)[1]), _common.CLI_REASON_LIMIT)
+
+
 class TestSummaryFailureFallback(FlushTestCase):
     def test_non_zero_exit_falls_back_and_records_error(self):
         self._claude_mock.return_value = _claude_completed_process(returncode=1, stdout="")
@@ -648,6 +668,25 @@ class TestSummaryFailureFallback(FlushTestCase):
         content = self.daily_path().read_text(encoding="utf-8")
         self.assertIn("claude-exit-1", content)
         self.assertEqual(self.health()["error"], "claude-exit-1")
+
+    def test_the_cli_reason_reaches_health_and_the_daily_note(self):
+        # The real shape, measured on this machine: the CLI explains itself in
+        # JSON on stdout and still exits non-zero. Reading only the exit code
+        # turned that sentence into a bare 'claude-exit-1', which told the user
+        # nothing and cost two days before anyone looked.
+        self._claude_mock.return_value = _claude_completed_process(
+            returncode=1,
+            stdout=json.dumps(
+                {
+                    "is_error": True,
+                    "result": "Failed to authenticate: OAuth session expired and could not be refreshed",
+                }
+            ),
+        )
+        self.run_flush("auth-fail-session", self.five_turns())
+
+        self.assertIn("Failed to authenticate", self.health()["error"])
+        self.assertIn("Failed to authenticate", self.daily_path().read_text(encoding="utf-8"))
 
     def test_non_json_stdout_falls_back_and_records_error(self):
         # This is how an expired OAuth session shows up on the real binary:

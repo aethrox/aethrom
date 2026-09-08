@@ -707,7 +707,7 @@ def _run_claude(prompt: str, stage: Path):
     except OSError:
         return "claude-exec-error"
     if result.returncode != 0:
-        return "claude-exit-{}".format(result.returncode)
+        return _common.claude_exit_reason(result.returncode, result.stdout)
     return None
 
 

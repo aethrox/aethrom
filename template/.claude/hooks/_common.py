@@ -105,3 +105,31 @@ def cleanup_state(state_directory):
                 os.remove(path)
         except OSError:
             pass
+
+
+CLI_REASON_LIMIT = 80
+
+
+def claude_exit_reason(returncode, stdout):
+    """Name a failed `claude -p` run, using the CLI's own message when it gave one.
+
+    The CLI reports a failure like an expired token as JSON on stdout while
+    still exiting non-zero, so a caller that reads only the exit code turns an
+    actionable sentence into an opaque 'claude-exit-1'. That string is what
+    reaches health.json and the daily-log fallback note, and it is the only
+    thing the user ever sees, so it carries the reason when there is one.
+
+    Flattened and capped: the same string goes into a JSON health record and a
+    single Markdown line, and neither survives a multi-line CLI message.
+    """
+    base = "claude-exit-{}".format(returncode)
+    try:
+        payload = json.loads(stdout)
+    except (ValueError, TypeError):
+        return base
+    if not isinstance(payload, dict):
+        return base
+    message = payload.get("result")
+    if not isinstance(message, str) or not message.strip():
+        return base
+    return "{}:{}".format(base, " ".join(message.split())[:CLI_REASON_LIMIT])
