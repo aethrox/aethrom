@@ -348,7 +348,7 @@ def _run_claude(prompt: str, vault_root: Path) -> "tuple[dict | None, str | None
         return None, "claude-exec-error"
 
     if result.returncode != 0:
-        return None, "claude-exit-{}".format(result.returncode)
+        return None, _common.claude_exit_reason(result.returncode, result.stdout)
 
     try:
         parsed = json.loads(result.stdout)
