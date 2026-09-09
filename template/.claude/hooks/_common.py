@@ -89,9 +89,20 @@ def mtime(path):
 
 
 def cleanup_state(state_directory):
-    """Delete session state files older than 7 days. Never raises."""
+    """Delete session state files older than 7 days. Never raises.
+
+    'flush-' covers both of flush.py's per-session files, the dedup record and
+    its lock. They are keyed by session id, so nothing ever revisits one and
+    they otherwise accumulate one pair per session for the life of the vault.
+    A week is far outside the 60 second dedup window, and a session id never
+    recurs, so no live flush can be holding a file this old.
+
+    The prefix is 'flush-' with the dash: 'last-flush.json' is the vault's
+    single most recent flush record and must survive, as must health.json,
+    compile-state.json and the backup markers.
+    """
     cutoff = time.time() - 7 * 86400
-    prefixes = ("session_start_time.", "prompt_count.", "needs_reflection.")
+    prefixes = ("session_start_time.", "prompt_count.", "needs_reflection.", "flush-")
     try:
         entries = os.listdir(state_directory)
     except OSError:
