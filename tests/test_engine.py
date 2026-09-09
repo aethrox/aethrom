@@ -161,6 +161,45 @@ class TestCleanupState(VaultTestCase):
         self.assertFalse(old_file.exists())
         self.assertTrue(fresh_file.exists())
 
+    def test_sweeps_stale_flush_state_and_locks(self):
+        # One pair per session, keyed by session id, so nothing ever revisits
+        # them and they used to accumulate for the life of the vault.
+        sdir = _common.state_dir()
+        key = "a" * 64
+        stale = [sdir / "flush-{}.json".format(key), sdir / "flush-{}.lock".format(key)]
+        fresh = sdir / "flush-{}.json".format("b" * 64)
+        for path in stale + [fresh]:
+            path.write_text("{}", encoding="utf-8")
+
+        old_time = time.time() - 8 * 86400
+        for path in stale:
+            os.utime(path, (old_time, old_time))
+
+        _common.cleanup_state(sdir)
+
+        for path in stale:
+            self.assertFalse(path.exists(), path.name)
+        self.assertTrue(fresh.exists())
+
+    def test_never_sweeps_the_vault_wide_state_files(self):
+        # The trap: matching 'flush' loosely would take last-flush.json with it.
+        sdir = _common.state_dir()
+        keep = [
+            sdir / "last-flush.json",
+            sdir / "health.json",
+            sdir / "compile-state.json",
+            sdir / "backup_ok",
+        ]
+        old_time = time.time() - 400 * 86400
+        for path in keep:
+            path.write_text("{}", encoding="utf-8")
+            os.utime(path, (old_time, old_time))
+
+        _common.cleanup_state(sdir)
+
+        for path in keep:
+            self.assertTrue(path.exists(), path.name)
+
 
 class TestMemoryDir(VaultTestCase):
     def test_globs_rather_than_hardcodes(self):
