@@ -63,10 +63,14 @@ enough. Resolve its three placeholders per platform:
 | | `{{GUARD_COMMAND}}` | `{{GUARD_ARG1}}` | `{{GUARD_SCRIPT}}` |
 |---|---|---|---|
 | Linux, macOS | `sh` | `--` | `${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh` |
-| Windows | `cmd` | `/c` | `${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\guard.cmd` |
+| Windows | absolute `cmd.exe` path, e.g. `C:\\Windows\\System32\\cmd.exe` | `/c` | `${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\guard.cmd` |
 
 The `--` on POSIX is what keeps both platforms on the same three-slot argument shape, so
 `settings.json` stays valid JSON with placeholders only ever appearing inside strings.
+
+Resolve `cmd.exe` to an absolute path on Windows (`(Get-Command cmd).Source`) instead of leaving
+it bare. Hooks are launched without a shell, and some hosts run them with a `PATH` that has no
+`System32` in it, which fails the hook with `Executable not found in $PATH: cmd`.
 
 `backup.sh` and `scripts/schedule-backup.ps1` still require Git Bash on Windows: the Git Bash
 dependency was removed from the hooks, not from the repository. `scripts/schedule-backup.ps1`
