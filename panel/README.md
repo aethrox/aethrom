@@ -81,8 +81,9 @@ resolution, backlinks, state-file reads, and the path guard.
 
 ## Limitations
 
-- Verified on Windows 11 with Python 3.11. The code is plain `http.server` and `pathlib` with
-  no platform-specific calls, but Linux and macOS are untested.
+- The test suite runs on Linux, Windows and macOS in CI. The server itself has only been
+  exercised by hand on Windows 11 with Python 3.11; the code is plain `http.server` and
+  `pathlib` with no platform-specific calls, but nobody has watched it render on the other two.
 - Search reads every note on each query. That measures 15-21 ms for 135 notes, so there is no
   cache; a vault an order of magnitude larger would want one.
 - The serif is whatever the system provides from the stack (Charter, then Sitka Text, then
