@@ -30,7 +30,7 @@ there is no per-platform installer to maintain.
 
 If the target vault path already exists, the agent shows it to you and asks before touching
 anything. `settings.local.json` holds the API key and is gitignored, so it is written from the
-template on every run rather than ever travelling with a vault.
+template on every run rather than ever traveling with a vault.
 
 ## Two ways in
 
@@ -103,11 +103,11 @@ template/            the vault scaffold, copied to its real home during setup
   .claude/backup.sh  commit and push the vault, scheduled hourly during setup
   .claude/run-hidden.vbs       Windows only: runs the hourly backup with no console window
   .claude/semantic-memory.py   optional mem0 recall bridge
-hermes/skills/       the same memory protocol, as a hermes skill
+hermes/skills/       the same memory protocol, as a Hermes skill
 panel/               the optional local web panel: engine health, open threads, note browser.
                      Reads the vault from outside and never writes into it
 scripts/             desktop launchers, the backup scheduler and upgrade-check.py, called from
-                     SETUP.md, plus the hermes installer (opt-in, run by hand)
+                     SETUP.md, plus the Hermes installer (opt-in, run by hand)
 tests/               the engine's test suite (`python -m unittest discover -s tests`), run on
                      Windows, Linux and macOS in CI
 docs/COMPILE-SECURITY.md     the threat model and defenses around the unattended evening compile
@@ -188,9 +188,9 @@ What actually differs is enforcement. Claude Code has hooks, so the memory read 
 reminder come from the harness whether the model cooperates or not. Everywhere else the protocol
 is only as reliable as the agent choosing to follow what `AGENTS.md` says.
 
-### Sharing the brain with hermes
+### Sharing the brain with Hermes
 
-If you also run [hermes](https://github.com/NousResearch), it can share the same vault and the
+If you also run [Hermes](https://github.com/NousResearch), it can share the same vault and the
 same memory files, so a thread one agent opens the other sees.
 
 ```bash
@@ -202,7 +202,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install-hermes.ps1 -VaultPath C
 
 The installer registers `hermes/skills/` in `skills.external_dirs`, so `git pull` updates the
 skill and there is no copy to keep in sync, and sets `OBSIDIAN_VAULT_PATH`. It is idempotent and
-backs up `config.yaml` first, in hermes' own `config.yaml.bak.<timestamp>` style.
+backs up `config.yaml` first, in Hermes' own `config.yaml.bak.<timestamp>` style.
 
 > [!IMPORTANT]
 > Hermes does not read `AGENTS.md`, it loads the skill instead. That means the same protocol is
