@@ -338,7 +338,7 @@ class FlushTestCase(VaultTestCase):
         # machine that happens to have Claude Code installed: _run_claude checks
         # shutil.which first and returns claude-cli-missing before the mocked
         # subprocess.run is ever reached, so ten tests assert against a fallback
-        # entry instead of the behaviour they name. CI found it; two developer
+        # entry instead of the behavior they name. CI found it; two developer
         # machines did not, because both had the binary.
         self._which_patcher = mock.patch("flush.shutil.which", return_value="claude")
         self._which_mock = self._which_patcher.start()
@@ -2010,7 +2010,7 @@ class TestUpgradeCheck(unittest.TestCase):
 
 
 class TestCompileStripsEmDash(CompileTestCase):
-    """flush.py normalises on its write path; compile.py has its own, and for a
+    """flush.py normalizes on its write path; compile.py has its own, and for a
     while it did not. An article carrying an em dash makes backup.sh refuse the
     whole staged commit, so the vault stops backing up that evening and every
     hour after, with nothing to say why.

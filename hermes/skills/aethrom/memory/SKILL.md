@@ -28,7 +28,7 @@ Read, in this order, before answering anything that depends on history:
    what Claude Code's session-start hook injects). This is the shared session log described below
    - reading it tells you what happened in sessions the other agent ran, not just what you ran.
 
-Claude Code gets this injected automatically by a hook. **You do not** - hermes has no hook
+Claude Code gets this injected automatically by a hook. **You do not** - Hermes has no hook
 system, so reading these is your own responsibility. If you skip it you will contradict what the
 other agent already established.
 

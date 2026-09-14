@@ -5,7 +5,7 @@ off, what is open, is the engine actually running":
 
 - **Engine strip** - last compile, last flush, last backup, and the health file. If anything is
   stale or failing, the strip says so in a plain sentence instead of hiding it.
-- **Active threads** - from `850-Companion/Threads.md`, with how long each has been open.
+- **Active threads** - from `🔮 850-*/Threads.md`, with how long each has been open.
 - **Last session** and where it stopped.
 - **Recent daily logs**, the **knowledge index**, and **connections** between concepts.
 - A **note browser** with live search, plus backlinks on every note.
