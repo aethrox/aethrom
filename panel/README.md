@@ -76,8 +76,10 @@ the vault stays a vault.
 python panel/test_panel.py
 ```
 
-Standard-library asserts against a real vault: thread parsing, frontmatter parsing, wikilink
-resolution, backlinks, state-file reads, and the path guard.
+Standard-library asserts against a throwaway vault built in a temp directory, so it runs
+anywhere and never touches real notes: the companion-folder glob, thread parsing including
+closed threads, frontmatter with inline lists, wikilink resolution, backlinks, dynamic folder
+discovery, state-file reads, and the path guard.
 
 ## Limitations
 
