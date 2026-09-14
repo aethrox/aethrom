@@ -91,6 +91,9 @@ throws if it cannot find one. See PHASE 6b for finding it.
 6. **Semantic memory (mem0)?** The file-based memory works with no API and is enough for most
    people. mem0 adds semantic search on top; the base tier is free (mem0.ai, no credit card).
    Recommended, but optional.
+7. **Local web panel?** A read-only page showing the engine's health, open threads and where
+   the last session stopped, plus a note browser with search. Needs Python and one package.
+   Optional; the vault works exactly the same without it.
 
 Confirm the vault path with the user before creating anything.
 
@@ -332,6 +335,39 @@ gitignored and must stay uncommitted. Verify with:
 "{{VENV_PYTHON}}" "{{VAULT_PATH}}/.claude/semantic-memory.py" add "test"
 "{{VENV_PYTHON}}" "{{VAULT_PATH}}/.claude/semantic-memory.py" search "test"
 ```
+
+---
+
+## PHASE 7b - Local web panel (optional)
+
+Skip entirely if the user said no; nothing else depends on it.
+
+The panel lives in `panel/` in this clone and reads the vault from outside. It never writes
+into the vault. Ask the user where they want it to live:
+
+- **Left in this clone** (simplest): `git pull` updates the panel along with everything else.
+- **Copied elsewhere**: copy the `panel/` directory wherever they prefer. It then stops
+  tracking this repo and has to be updated by hand.
+
+Either way it needs one package, and it needs to be told where the vault is:
+
+```bash
+pip install markdown        # or: uv pip install markdown
+python panel/panel.py --vault "{{VAULT_PATH}}"
+```
+
+Open http://127.0.0.1:8420/ and confirm the engine strip, the threads and the note browser
+render. Stop with Ctrl+C.
+
+To avoid passing `--vault` every time:
+
+```bash
+export AETHROM_VAULT="{{VAULT_PATH}}"      # Linux and macOS, add to the shell profile
+setx AETHROM_VAULT "{{VAULT_PATH}}"        # Windows, applies to new shells
+```
+
+If it cannot find a vault it prints the path it tried and exits 1 rather than serving an empty
+page. `panel/README.md` carries the rest, including what it deliberately never reads.
 
 ---
 

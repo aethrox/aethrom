@@ -104,6 +104,8 @@ template/            the vault scaffold, copied to its real home during setup
   .claude/run-hidden.vbs       Windows only: runs the hourly backup with no console window
   .claude/semantic-memory.py   optional mem0 recall bridge
 hermes/skills/       the same memory protocol, as a hermes skill
+panel/               the optional local web panel: engine health, open threads, note browser.
+                     Reads the vault from outside and never writes into it
 scripts/             desktop launchers, the backup scheduler and upgrade-check.py, called from
                      SETUP.md, plus the hermes installer (opt-in, run by hand)
 tests/               the engine's test suite (`python -m unittest discover -s tests`), run on
@@ -206,6 +208,22 @@ backs up `config.yaml` first, in hermes' own `config.yaml.bak.<timestamp>` style
 > Hermes does not read `AGENTS.md`, it loads the skill instead. That means the same protocol is
 > written down twice, in `AGENTS.md` and in `hermes/skills/aethrom/memory/SKILL.md`, and a change
 > to one has to be made in the other by hand.
+
+### The optional local panel
+
+`panel/` is a small read-only web page for the vault: the engine's health, the threads still
+open, where the last session stopped, recent daily logs, the knowledge index and a note
+browser with search and backlinks. It is a single Python file using the standard library plus
+`markdown`, binds to `127.0.0.1`, and writes nothing into the vault.
+
+```bash
+pip install markdown
+python panel/panel.py --vault ~/Documents/MyVault
+```
+
+Nothing else depends on it, and SETUP.md asks before installing it. See `panel/README.md`.
+
+---
 
 ## House rule: no em dash
 
